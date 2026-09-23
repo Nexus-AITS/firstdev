@@ -1,0 +1,172 @@
+/**
+ * NEXUS runtime verification.
+ * Run: node verify.mjs   (requires `npm run preview` on :4173 + chromium)
+ */
+import { chromium } from "playwright";
+
+const BASE = "http://localhost:4173";
+
+const ROUTES = [
+  ["/", "NEXUS"],
+  ["/events", "WELCOME TO THE NEXUS"],
+  ["/events/forge", "THE FORGE"],
+  ["/events/paradox", "THE PARADOX"],
+  ["/events/arena", "THE ARENA"],
+  ["/events/nexus-breach", "NEXUS BREACH"],
+  ["/events/the-scientist-files", "THE SCIENTIST FILES"],
+  ["/events/neon-vanguard", "NEON VANGUARD"],
+  ["/ai", "THE NEXUS"],
+  ["/about", "EVERYTHING"],
+  ["/definitely-missing", "REALM NOT FOUND"],
+];
+
+const VIEWPORTS = [
+  { name: "desktop", width: 1440, height: 900 },
+  { name: "mobile", width: 390, height: 844 },
+];
+
+const benign = (t) => /favicon|fonts\.g|Failed to load resource|net::ERR_/i.test(t);
+
+let failures = 0;
+const out = (ok, label, detail = "") => {
+  if (!ok) failures += 1;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  |  ${detail}` : ""}`);
+};
+
+const browser = await chromium.launch({ channel: "chrome" });
+
+/* -------- route x viewport matrix -------- */
+for (const vp of VIEWPORTS) {
+  const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on("console", (m) => {
+    if (m.type() === "error") errors.push(m.text());
+  });
+  page.on("pageerror", (e) => errors.push(`PAGEERROR: ${e.message}`));
+
+  for (const [route, expect] of ROUTES) {
+    errors.length = 0;
+    try {
+      await page.goto(BASE + route, { waitUntil: "domcontentloaded", timeout: 20000 });
+    } catch (e) {
+      out(false, `${vp.name} ${route}`, `goto: ${e.message}`);
+      continue;
+    }
+    await page.waitForTimeout(1000);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    const h1 = (await page.evaluate(() => document.querySelector("h1")?.textContent)) || "";
+    const bad = errors.filter((e) => !benign(e));
+    const norm = (s) => s.replace(/\s+/g, "");
+    const ok = overflow <= 2 && bad.length === 0 && norm(h1).includes(norm(expect));
+    out(
+      ok,
+      `${vp.name.padEnd(7)} ${route}`,
+      `h1="${h1.trim().slice(0, 40)}" overflow=${overflow}${bad.length ? ` errors=${bad.slice(0, 2).join(" || ")}` : ""}`
+    );
+  }
+  await ctx.close();
+}
+
+/* -------- ENTER NEXUS full cinematic transition -------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on("pageerror", (e) => errs.push(e.message));
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1400);
+  // the sole entry CTA sits at the end of the scroll story
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(1800);
+  await page.getByRole("button", { name: /enter the nexus/i }).click();
+  await page.waitForTimeout(2300);
+  const midVisible = await page.locator('[role="status"]').isVisible().catch(() => false);
+  await page.waitForTimeout(4400);
+  const path = new URL(page.url()).pathname;
+  const overlayGone = (await page.locator('[role="status"]').count()) === 0;
+  const portals = await page
+    .locator('main a[href="/events/forge"], main a[href="/events/paradox"], main a[href="/events/arena"]')
+    .count();
+  out(
+    path === "/events" && midVisible && overlayGone && portals === 3 && errs.length === 0,
+    "ENTER NEXUS transition",
+    `path=${path} midWelcome=${midVisible} gone=${overlayGone} portals=${portals}${errs[0] ? ` err=${errs[0]}` : ""}`
+  );
+  await ctx.close();
+}
+
+/* -------- portal navigation + external CTA + keyboard focus -------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  await page.goto(BASE + "/events", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  await page.locator('a[href="/events/paradox"]').first().click();
+  await page.waitForTimeout(900);
+  out(new URL(page.url()).pathname === "/events/paradox", "portal navigation", new URL(page.url()).pathname);
+
+  await page.goto(BASE + "/events/forge", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const explores = await page.locator('a[data-cursor="open"]').count();
+  out(explores >= 5, "forge explore links", `count=${explores}`);
+
+  await page.goto(BASE + "/events/nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const href = await page.getByRole("link", { name: /enter event/i }).getAttribute("href");
+  out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
+
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(600);
+  await page.keyboard.press("Tab");
+  const focus = await page.evaluate(() => document.activeElement?.className || "");
+  out(String(focus).includes("skip-link"), "keyboard focus (skip link first)", String(focus).slice(0, 40));
+  await ctx.close();
+}
+
+/* -------- mobile menu -------- */
+{
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+    isMobile: true,
+  });
+  const page = await ctx.newPage();
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  await page.getByRole("button", { name: "Open menu" }).click();
+  await page.locator("#nexus-mobile-menu").waitFor({ state: "visible", timeout: 4000 });
+  await page.locator('#nexus-mobile-menu a[href="/about"]').click();
+  await page.waitForTimeout(1000);
+  out(new URL(page.url()).pathname === "/about", "mobile menu navigation", new URL(page.url()).pathname);
+  await ctx.close();
+}
+
+/* -------- reduced-motion transition -------- */
+{
+  const ctx = await browser.newContext({
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on("pageerror", (e) => errs.push(e.message));
+  await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(1200);
+  await page.getByRole("button", { name: /enter the nexus/i }).click();
+  await page.waitForTimeout(4000);
+  const path = new URL(page.url()).pathname;
+  out(
+    path === "/events" && errs.length === 0,
+    "reduced-motion transition",
+    `path=${path}${errs[0] ? ` err=${errs[0]}` : ""}`
+  );
+  await ctx.close();
+}
+
+await browser.close();
+console.log(failures === 0 ? "\n=== ALL CHECKS PASSED ===" : `\n=== ${failures} CHECK(S) FAILED ===`);
+process.exit(failures === 0 ? 0 : 1);
+

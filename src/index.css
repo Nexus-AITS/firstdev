@@ -1,0 +1,590 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #050308;
+  --color-abyss: #0a0612;
+  --color-nebula: #12091f;
+  --color-violet-core: #7c3aed;
+  --color-violet-bright: #a855f7;
+  --color-lavender: #d8b4fe;
+  --color-crystal: #f5f3ff;
+  --color-gold: #f5d78e;
+  --font-display: "Cormorant Garamond", Georgia, "Times New Roman", serif;
+  --font-sans: "Space Grotesk", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    scrollbar-color: #3b1a66 #050308;
+    scrollbar-width: thin;
+  }
+
+  body {
+    background-color: var(--color-void);
+    color: color-mix(in oklab, var(--color-crystal) 84%, transparent);
+    font-family: var(--font-sans);
+    font-weight: 300;
+    overflow-x: hidden;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    color: var(--color-crystal);
+  }
+
+  ::selection {
+    background: rgba(124, 58, 237, 0.7);
+    color: #f5f3ff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #050308;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: linear-gradient(#3b1a66, #5b21b6);
+    border-radius: 999px;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-lavender);
+    outline-offset: 4px;
+    border-radius: 2px;
+  }
+}
+
+/* ---------- utilities & atmosphere ---------- */
+
+.skip-link {
+  position: fixed;
+  top: -120px;
+  left: 1rem;
+  z-index: 300;
+  padding: 0.75rem 1.25rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: #050308;
+  background: #d8b4fe;
+  transition: top 0.25s ease;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+.text-glow {
+  text-shadow: 0 0 28px rgba(168, 85, 247, 0.5), 0 0 80px rgba(124, 58, 237, 0.25);
+}
+
+.text-glow-soft {
+  text-shadow: 0 0 24px rgba(216, 180, 254, 0.35);
+}
+
+.hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(216, 180, 254, 0.35), transparent);
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(245, 243, 255, 0.07);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.scanlines {
+  position: relative;
+}
+.scanlines::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(168, 85, 247, 0.07) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+.grid-circuit {
+  background-image:
+    linear-gradient(rgba(124, 58, 237, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 58, 237, 0.1) 1px, transparent 1px);
+  background-size: 56px 56px;
+  /* fade the grid out at the edges so the layer never shows a hard rectangle */
+  -webkit-mask-image: radial-gradient(ellipse 74% 70% at 50% 50%, #000 42%, transparent 100%);
+  mask-image: radial-gradient(ellipse 74% 70% at 50% 50%, #000 42%, transparent 100%);
+}
+
+.noise-veil {
+  background-image: radial-gradient(rgba(245, 243, 255, 0.035) 1px, transparent 1px);
+  background-size: 3px 3px;
+}
+
+/* ---------- animations ---------- */
+
+@keyframes nexus-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nexus-spin-rev {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes nexus-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-14px);
+  }
+}
+@keyframes nexus-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes nexus-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+@keyframes nexus-glitch {
+  0%,
+  92%,
+  100% {
+    transform: translate(0, 0);
+    clip-path: inset(0 0 0 0);
+  }
+  93% {
+    transform: translate(-3px, 1px);
+    clip-path: inset(20% 0 40% 0);
+  }
+  95% {
+    transform: translate(3px, -1px);
+    clip-path: inset(60% 0 10% 0);
+  }
+  97% {
+    transform: translate(-2px, 0);
+    clip-path: inset(5% 0 75% 0);
+  }
+}
+@keyframes nexus-dash {
+  to {
+    stroke-dashoffset: -60;
+  }
+}
+@keyframes nexus-sweep {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(1200%);
+    opacity: 0;
+  }
+}
+@keyframes nexus-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4%, -3%, 0) scale(1.07);
+  }
+  100% {
+    transform: translate3d(-3%, 2.5%, 0) scale(1);
+  }
+}
+@keyframes nexus-aurora {
+  0% {
+    transform: translate3d(-5%, 0, 0) scale(1.04);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translate3d(6%, -3.5%, 0) scale(1.16);
+    opacity: 0.92;
+  }
+  100% {
+    transform: translate3d(-5%, 0, 0) scale(1.04);
+    opacity: 0.5;
+  }
+}
+/*
+ * Sheen travel is clamped to 0..100%. The gradient is 460% wide with
+ * no-repeat, so positions outside that range push the image entirely
+ * past the element box and the background-clip:text fill vanishes with
+ * it (letters go invisible). Within 0..100% the box is always covered
+ * while the highlight still sweeps the full width of the word.
+ * 100% -> 0% keeps the original right-to-left direction; both endpoints
+ * land on the gradient's matching #f5f3ff ends, so the loop is seamless.
+ */
+@keyframes nexus-sheen {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+@keyframes nexus-halo {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.88;
+    transform: scale(1.07);
+  }
+}
+
+.anim-spin-slow {
+  animation: nexus-spin 26s linear infinite;
+}
+.anim-spin-rev {
+  animation: nexus-spin-rev 34s linear infinite;
+}
+.anim-float {
+  animation: nexus-float 7s ease-in-out infinite;
+}
+.anim-pulse {
+  animation: nexus-pulse 2.4s ease-in-out infinite;
+}
+.anim-blink {
+  animation: nexus-blink 1.6s steps(2, start) infinite;
+}
+.anim-glitch {
+  animation: nexus-glitch 6s linear infinite;
+}
+.anim-drift {
+  animation: nexus-drift 52s ease-in-out infinite;
+  will-change: transform;
+}
+.anim-aurora {
+  animation: nexus-aurora 34s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.anim-halo {
+  animation: nexus-halo 4.2s ease-in-out infinite;
+}
+
+/**
+ * Liquid-light wordmark. Applied per glyph (each letter clips its own
+ * gradient), which keeps the effect correct while the letters animate on
+ * transform. Stagger each letter's animation-delay and a highlight visibly
+ * travels through the word.
+ */
+.text-sheen {
+  color: var(--color-crystal);
+  background-image: linear-gradient(
+    100deg,
+    #f5f3ff 0%,
+    #ffffff 26%,
+    #d8b4fe 46%,
+    #ffffff 66%,
+    #f5f3ff 100%
+  );
+  background-size: 460% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: nexus-sheen 9s ease-in-out infinite;
+}
+
+@supports (-webkit-background-clip: text) {
+  .text-sheen {
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+/**
+ * Bloom for the wordmark. Sits on the container so the whole word is
+ * filtered once (two drop-shadow passes) rather than once per glyph.
+ */
+.wordmark-glow {
+  filter: drop-shadow(0 0 26px rgba(168, 85, 247, 0.45))
+    drop-shadow(0 0 80px rgba(124, 58, 237, 0.3));
+}
+
+/* ============================================================
+   REALM UNIVERSE — /events gateway, realm cores and fly-through
+   ============================================================ */
+
+/**
+ * Electric arc flicker. Real arcs are erratic: long dark gaps, then a
+ * burst of two or three restrikes. Steps() would look mechanical, so the
+ * keyframes are hand-placed to keep the rhythm irregular.
+ */
+@keyframes nexus-arc {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  38% {
+    opacity: 0.85;
+  }
+  41% {
+    opacity: 0.12;
+  }
+  44% {
+    opacity: 0.92;
+  }
+  53% {
+    opacity: 0.1;
+  }
+  56% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.05;
+  }
+}
+
+/* reactor containment pulse — a ring that expands past the crystal */
+@keyframes nexus-pulse-ring {
+  0% {
+    transform: scale(0.34);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.72;
+  }
+  100% {
+    transform: scale(2.35);
+    opacity: 0;
+  }
+}
+
+/* paradox: space refusing to hold still */
+@keyframes nexus-distort {
+  0%,
+  100% {
+    transform: scale(1, 1) skewX(0deg);
+  }
+  28% {
+    transform: scale(1.035, 0.972) skewX(1.5deg);
+  }
+  57% {
+    transform: scale(0.972, 1.032) skewX(-1.3deg);
+  }
+  79% {
+    transform: scale(1.018, 0.99) skewX(0.6deg);
+  }
+}
+
+/* gold embers rising out of the fracture */
+@keyframes nexus-ember {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.5);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate3d(var(--ex, 10px), -150px, 0) scale(1.15);
+    opacity: 0;
+  }
+}
+
+/* the seam of light inside a split crystal */
+@keyframes nexus-rift {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: translateX(-50%) scaleY(0.86);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translateX(-50%) scaleY(1.06);
+  }
+}
+
+/* arena: signal corruption. Sparse — a constant glitch reads as a bug. */
+@keyframes nexus-glitch-shift {
+  0%,
+  89%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  91% {
+    transform: translate3d(-3px, 1px, 0);
+  }
+  93% {
+    transform: translate3d(3px, -1px, 0);
+  }
+  95% {
+    transform: translate3d(-2px, 0, 0);
+  }
+  97% {
+    transform: translate3d(2px, 1px, 0);
+  }
+}
+
+/* the iris that opens on arrival — reveal comes from the crystal outward */
+@keyframes nexus-iris {
+  from {
+    clip-path: circle(0% at 50% 44%);
+  }
+  to {
+    clip-path: circle(142% at 50% 44%);
+  }
+}
+
+/* fly-through: fragments streaking past the camera */
+@keyframes nexus-flyby {
+  0% {
+    transform: translate3d(0, 0, 0) scale(0.25);
+    opacity: 0;
+  }
+  14% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate3d(var(--fx, 0px), var(--fy, 0px), 0) scale(1.8);
+    opacity: 0;
+  }
+}
+
+/* the energy wall that swallows the screen before the jump */
+@keyframes nexus-warp {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  22% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(3.4);
+    opacity: 0;
+  }
+}
+
+@keyframes nexus-breathe-soft {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.78;
+    transform: scale(1.05);
+  }
+}
+
+.anim-arc {
+  animation: nexus-arc 3.4s linear infinite;
+}
+.anim-pulse-ring {
+  animation: nexus-pulse-ring 4.6s cubic-bezier(0.22, 0.68, 0.3, 1) infinite;
+}
+.anim-distort {
+  animation: nexus-distort 11s ease-in-out infinite;
+}
+.anim-ember {
+  animation: nexus-ember 7s ease-out infinite;
+}
+.anim-rift {
+  animation: nexus-rift 3.6s ease-in-out infinite;
+}
+.anim-glitch-shift {
+  animation: nexus-glitch-shift 7.5s steps(1, end) infinite;
+}
+.anim-iris {
+  animation: nexus-iris 1.5s cubic-bezier(0.3, 0.86, 0.24, 1) forwards;
+}
+.anim-flyby {
+  animation: nexus-flyby 1.15s cubic-bezier(0.4, 0.02, 0.9, 0.5) forwards;
+}
+.anim-warp {
+  animation: nexus-warp 1.05s cubic-bezier(0.3, 0.1, 0.75, 0.4) forwards;
+}
+.anim-breathe-soft {
+  animation: nexus-breathe-soft 6.5s ease-in-out infinite;
+}
+
+/**
+ * Realm-tinted atmosphere. One element, one custom property — the focus
+ * state swaps `--realm-tint` and the whole environment follows without a
+ * React re-render of the particle layers.
+ */
+.realm-veil {
+  background: radial-gradient(
+    68% 62% at 50% 46%,
+    color-mix(in oklab, var(--realm-tint, #7c3aed) 34%, transparent),
+    transparent 72%
+  );
+  transition: background 900ms ease;
+}
+
+.distort-zone {
+  animation: nexus-distort 11s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+
+/* Lenis */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
+/* ---------- reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /**
+   * Freeze the sheen on a static gradient: the animated fill position
+   * is timing-sensitive, so reduced-motion gets a deterministic fill
+   * instead of whatever frame the cycle lands on.
+   */
+  .text-sheen {
+    animation: none !important;
+    background-image: linear-gradient(100deg, #ffffff 0%, #f5f3ff 38%, #e4d6ff 68%, #ffffff 100%);
+    background-size: 100% 100%;
+    background-position: 0% 50%;
+  }
+}
