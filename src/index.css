@@ -99,8 +99,10 @@
 .glass-panel {
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(245, 243, 255, 0.07);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* 8px ≈ same read as 14px over this near-black backdrop, ~40% cheaper —
+     backdrop-filter re-blurs everything under the panel every frame */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 .scanlines {

@@ -50,7 +50,7 @@ export default function Navbar() {
         className={[
           "fixed inset-x-0 top-0 z-40 transition-colors duration-500",
           scrolled
-            ? "border-b border-white/5 bg-void/55 backdrop-blur-xl"
+            ? "border-b border-white/5 bg-void/70 backdrop-blur-md"
             : "border-b border-transparent bg-transparent",
         ].join(" ")}
       >

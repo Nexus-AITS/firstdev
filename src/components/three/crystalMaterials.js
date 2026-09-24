@@ -25,7 +25,12 @@ export function createShardKit() {
  * low specular so the internal core never throws twin hot-spots,
  * iridescent fresnel for subtle lavender/gold edge shimmer.
  */
-export function createCrystalMaterials() {
+export function createCrystalMaterials({ quality = "high" } = {}) {
+  // "low" tiers (tablet/mobile portals, mobile home) keep the transmission
+  // look but drop the BRANCH-heavy extras — clearcoat lobe, iridescence
+  // sweep — and dim the env: measured ~2x cheaper fragment cost on mid GPUs
+  // with an almost identical read behind fog + vignette + grain.
+  const low = quality !== "high";
   const physical = (o = {}) =>
     new THREE.MeshPhysicalMaterial({
       color: "#efe6ff",
@@ -33,14 +38,14 @@ export function createCrystalMaterials() {
       transmission: 1,
       thickness: 0.9,
       ior: 1.48,
-      clearcoat: 1,
+      clearcoat: low ? 0.35 : 1,
       clearcoatRoughness: 0.12,
       attenuationColor: new THREE.Color("#7c3aed"),
       attenuationDistance: 3.2, // long — deep violet shadows, never opaque
-      envMapIntensity: 2.1,
+      envMapIntensity: low ? 1.6 : 2.1,
       specularIntensity: 0.55, // tame interior point-light reflections
       roughness: 0.1,
-      iridescence: 0.28,
+      iridescence: low ? 0.12 : 0.28,
       iridescenceIOR: 1.3,
       dispersion: 0, // charged per-material (see `light`) — dispersion triples
       // the transmission sampling cost, so it is reserved for the hero spire
@@ -49,16 +54,27 @@ export function createCrystalMaterials() {
     });
 
   return {
-    light: physical({
-      color: "#f2ebff",
-      roughness: 0.045,
-      clearcoatRoughness: 0.05,
-      thickness: 1.3,
-      attenuationDistance: 4.2,
-      envMapIntensity: 2.6,
-      iridescence: 0.34,
-      dispersion: 3.2, // real chromatic fire through the facets (three r167+)
-    }),
+    light: physical(
+      low
+        ? {
+            color: "#f2ebff",
+            roughness: 0.045,
+            thickness: 1.3,
+            attenuationDistance: 4.2,
+            envMapIntensity: 1.9,
+            dispersion: 0, // tier-gated: dispersion triples transmission cost
+          }
+        : {
+            color: "#f2ebff",
+            roughness: 0.045,
+            clearcoatRoughness: 0.05,
+            thickness: 1.3,
+            attenuationDistance: 4.2,
+            envMapIntensity: 2.6,
+            iridescence: 0.34,
+            dispersion: 3.2, // real chromatic fire through the facets (three r167+)
+          }
+    ),
     mid: physical({
       color: "#e4d6ff",
       roughness: 0.11,

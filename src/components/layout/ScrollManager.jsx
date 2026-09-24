@@ -15,6 +15,17 @@ export default function ScrollManager() {
     return () => cancelAnimationFrame(id);
   }, [pathname]);
 
+  // Layout shifts after mount: webfont swap (display serif changes heading
+  // metrics) and late image/load settle both invalidate trigger positions.
+  // Without this, a hard reload on Home computes the crystal story against
+  // stale rects — scatter/glow land on the wrong values ("abnormal NEXUS").
+  useEffect(() => {
+    const refresh = () => ScrollTrigger.refresh();
+    document.fonts?.ready.then(refresh).catch(() => {});
+    window.addEventListener("load", refresh, { once: true });
+    return () => window.removeEventListener("load", refresh);
+  }, []);
+
   return null;
 }
 

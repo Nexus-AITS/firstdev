@@ -24,7 +24,7 @@ function Backdrop() {
         className="anim-drift absolute inset-[-30%] bg-[radial-gradient(26%_24%_at_24%_24%,rgba(216,180,254,0.10),transparent_70%)]"
         style={{ animationDelay: "-23s" }}
       />
-      <div className="anim-pulse absolute left-1/2 top-1/2 h-[64vmin] w-[64vmin] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.40),rgba(124,58,237,0.10)_55%,transparent_72%)] blur-[80px]" />
+      <div className="anim-pulse absolute left-1/2 top-1/2 h-[64vmin] w-[64vmin] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.40),rgba(124,58,237,0.10)_55%,transparent_72%)]" />
     </div>
   );
 }

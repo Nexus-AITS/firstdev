@@ -13,7 +13,7 @@ import { createCrystalEnvironment } from "./crystalEnvironment.js";
  * glass chips, translucent free fragments, a volumetric beam, pulsing
  * internal energy and near-camera bokeh.
  */
-export default function CrystalCore({ fragments: fragmentCount = 16, reduced = false }) {
+export default function CrystalCore({ fragments: fragmentCount = 16, reduced = false, quality = "high" }) {
   const { gl, scene } = useThree();
 
   const root = useRef(null);
@@ -36,7 +36,7 @@ export default function CrystalCore({ fragments: fragmentCount = 16, reduced = f
   const starTex = useMemo(makeStarGlintTexture, []);
   const shaftTex = useMemo(makeShaftTexture, []);
   const kit = useMemo(createShardKit, []);
-  const mats = useMemo(createCrystalMaterials, []);
+  const mats = useMemo(() => createCrystalMaterials({ quality }), [quality]);
   const cluster = useMemo(() => buildCluster(fragmentCount), [fragmentCount]);
   const refs = {
     root,

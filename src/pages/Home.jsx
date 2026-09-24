@@ -68,15 +68,17 @@ export default function Home() {
       {/* cosmic backdrop — stars, aurora veils and the crystal's halo */}
       <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden>
         <ParticleField mode="stars" />
-        {/* aurora ribbons: huge blurred violet/lavender washes that drift
-            slowly enough to register as atmosphere, not motion */}
-        <div className="anim-aurora absolute -left-[22%] top-[-18%] h-[72vmax] w-[72vmax] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.5),rgba(124,58,237,0.12)_45%,transparent_70%)] blur-3xl md:blur-[110px]" />
+        {/* aurora ribbons: huge soft violet/lavender washes that drift
+            slowly enough to register as atmosphere, not motion. The radial
+            gradients already fade to transparent — no CSS blur filter needed
+            (blur-[110px] on 72vmax layers forced giant per-frame rasters). */}
+        <div className="anim-aurora absolute -left-[22%] top-[-18%] h-[72vmax] w-[72vmax] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.5),rgba(124,58,237,0.12)_45%,transparent_70%)]" />
         <div
-          className="anim-aurora absolute -right-[26%] top-[16%] h-[64vmax] w-[64vmax] rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.42),rgba(216,180,254,0.1)_48%,transparent_72%)] blur-3xl md:blur-[130px]"
+          className="anim-aurora absolute -right-[26%] top-[16%] h-[64vmax] w-[64vmax] rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.42),rgba(216,180,254,0.1)_48%,transparent_72%)]"
           style={{ animationDelay: "-11s", animationDuration: "41s" }}
         />
         <div
-          className="anim-aurora absolute bottom-[-24%] left-[8%] h-[58vmax] w-[58vmax] rounded-full bg-[radial-gradient(circle,rgba(245,215,142,0.16),rgba(124,58,237,0.14)_42%,transparent_70%)] blur-3xl md:blur-[140px]"
+          className="anim-aurora absolute bottom-[-24%] left-[8%] h-[58vmax] w-[58vmax] rounded-full bg-[radial-gradient(circle,rgba(245,215,142,0.16),rgba(124,58,237,0.14)_42%,transparent_70%)]"
           style={{ animationDelay: "-23s", animationDuration: "49s" }}
         />
         {/* the halo breathing behind the core — ties CSS light to the WebGL
@@ -86,10 +88,17 @@ export default function Home() {
           aria-hidden
           className="absolute left-1/2 top-[46%] h-[46vmax] w-[46vmax] -translate-x-1/2 -translate-y-1/2"
         >
-          <div className="anim-halo h-full w-full rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.3),rgba(124,58,237,0.1)_40%,transparent_68%)] blur-3xl" />
+          <div className="anim-halo h-full w-full rounded-full bg-[radial-gradient(circle,rgba(168,85,247,0.3),rgba(124,58,237,0.1)_40%,transparent_68%)]" />
         </div>
-        {/* fine vertical energy curtain near the centre column */}
-        <div className="absolute left-1/2 top-0 h-full w-[52vw] -translate-x-1/2 bg-[linear-gradient(to_bottom,transparent,rgba(168,85,247,0.09)_38%,rgba(216,180,254,0.05)_55%,transparent)] blur-2xl" />
+        {/* fine vertical energy curtain near the centre column — horizontal
+            fade comes from a static mask instead of a 52vw blur filter */}
+        <div
+          className="absolute left-1/2 top-0 h-full w-[52vw] -translate-x-1/2 bg-[linear-gradient(to_bottom,transparent,rgba(168,85,247,0.09)_38%,rgba(216,180,254,0.05)_55%,transparent)]"
+          style={{
+            maskImage: "linear-gradient(to right, transparent, #000 22%, #000 78%, transparent)",
+            WebkitMaskImage: "linear-gradient(to right, transparent, #000 22%, #000 78%, transparent)",
+          }}
+        />
         {/* engineered space: a masked measurement grid so the void reads as a
             constructed realm rather than empty black. Fades out well before
             the edges, so it can never introduce overflow. */}
@@ -106,8 +115,12 @@ export default function Home() {
       </div>
       <CrystalCanvas />
 
-      {/* film grain — unifies every layer under one texture */}
-      <div aria-hidden className="noise-veil pointer-events-none fixed inset-0 z-[65] opacity-40 mix-blend-soft-light" />
+      {/* film grain — unifies every layer under one texture. Plain low-alpha
+          dots instead of mix-blend-soft-light: a full-viewport blend layer
+          forces the compositor to re-blend everything beneath it (WebGL +
+          two canvases) on every frame — this was one of the biggest
+          continuous costs on Home. */}
+      <div aria-hidden className="noise-veil pointer-events-none fixed inset-0 z-[65] opacity-40" />
 
       <div ref={wrapRef} className="relative z-10">
         <HomeHero />

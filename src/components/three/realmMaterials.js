@@ -46,9 +46,9 @@ export function createRealmTextures() {
   };
 }
 
-export function createRealmMaterials(realmId, tex) {
+export function createRealmMaterials(realmId, tex, quality = "high") {
   const p = PALETTE[realmId] ?? PALETTE.forge;
-  const b = createCrystalMaterials();
+  const b = createCrystalMaterials({ quality });
 
   const tint = (m, { atten = p.atten, emissive = null, ei = 0.5 } = {}) => {
     m.attenuationColor = new THREE.Color(atten);

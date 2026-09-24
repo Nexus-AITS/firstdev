@@ -18,7 +18,9 @@ export default function useSmoothScroll() {
     }
 
     const lenis = new Lenis({
-      lerp: 0.09,
+      // 0.09 floated for ~1 frame too long after any hiccup and read as
+      // "stuck"; 0.11 keeps the cinematic glide but tracks input immediately.
+      lerp: 0.11,
       smoothWheel: true,
       wheelMultiplier: 1,
       touchMultiplier: 1.6,

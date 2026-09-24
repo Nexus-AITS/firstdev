@@ -15,9 +15,12 @@ function IdlePulse({ active, reduced }) {
   const invalidate = useThree((s) => s.invalidate);
   useEffect(() => {
     if (active || reduced) return undefined;
+    // 180ms (was 110ms): idle portals are three canvases on /events — each
+    // nudge is a full transmission render, so the slower ambient breath
+    // halves idle GPU load with no visible difference on slow sine motion.
     const id = setInterval(() => {
       if (!document.hidden) invalidate();
-    }, 110);
+    }, 180);
     return () => clearInterval(id);
   }, [active, reduced, invalidate]);
   return null;
@@ -38,6 +41,8 @@ export default function RealmStage({ realm, active = false, className = "" }) {
   const camZ = tier === "mobile" ? 6.1 : tier === "tablet" ? 5.7 : 5.4;
   const accent = realm.accent;
   const fx = realm.fx; // circuit | paradox | hud
+  const dprCap = tier === "mobile" ? 1.15 : tier === "tablet" ? 1.3 : 1.4;
+  const quality = tier === "desktop" ? "high" : "low";
 
   return (
     <div className={`relative aspect-square w-full ${className}`} aria-hidden>
@@ -123,18 +128,20 @@ export default function RealmStage({ realm, active = false, className = "" }) {
       {hasWebGL ? (
         <Canvas
           className="absolute inset-0"
-          dpr={[1, tier === "mobile" ? 1.3 : 1.6]}
+          dpr={[1, dprCap]}
           camera={{ position: [0, 0.12, camZ], fov: 40, near: 0.1, far: 40 }}
           frameloop={active && !reduced ? "always" : "demand"}
           gl={{
             alpha: true,
-            antialias: tier !== "mobile",
+            antialias: tier === "desktop",
             powerPreference: "high-performance",
             stencil: false,
           }}
           onCreated={({ gl }) => {
             if ("transmissionResolutionScale" in gl) {
-              gl.transmissionResolutionScale = tier === "mobile" ? 0.5 : 0.85;
+              // portals are small on screen — a half-res transmission pass
+              // is visually identical here and ~2x cheaper per nudge
+              gl.transmissionResolutionScale = tier === "mobile" ? 0.42 : 0.55;
             }
           }}
         >
@@ -143,7 +150,7 @@ export default function RealmStage({ realm, active = false, className = "" }) {
           <pointLight position={[2.6, 1.8, 3.4]} intensity={26} distance={20} color="#a855f7" />
           <pointLight position={[-3, 1, -2.6]} intensity={18} distance={22} color="#d8b4fe" />
           <IdlePulse active={active} reduced={reduced} />
-          <RealmCrystal realmId={realm.id} active={active} reduced={reduced} />
+          <RealmCrystal realmId={realm.id} active={active} reduced={reduced} quality={quality} />
         </Canvas>
       ) : (
         <div className="absolute inset-0">

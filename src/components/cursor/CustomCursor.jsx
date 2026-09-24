@@ -23,6 +23,10 @@ export default function CustomCursor() {
     let y = window.innerHeight / 2;
     let rx = x;
     let ry = r0();
+    let px = -1;
+    let py = -1;
+    let prx = -1;
+    let pry = -1;
     function r0() {
       return window.innerHeight / 2;
     }
@@ -50,8 +54,18 @@ export default function CustomCursor() {
     const tick = () => {
       rx += (x - rx) * 0.16;
       ry += (y - ry) * 0.16;
-      if (dotRef.current) dotRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-      if (ringRef.current) ringRef.current.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      // Only touch the DOM when something actually moved — an idle mouse
+      // used to trigger two style writes × 60fps for nothing.
+      if (dotRef.current && (px !== x || py !== y)) {
+        px = x;
+        py = y;
+        dotRef.current.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      }
+      if (ringRef.current && (Math.abs(rx - prx) > 0.08 || Math.abs(ry - pry) > 0.08)) {
+        prx = rx;
+        pry = ry;
+        ringRef.current.style.transform = `translate3d(${rx}px, ${ry}px, 0)`;
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

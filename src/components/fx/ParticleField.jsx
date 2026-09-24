@@ -21,10 +21,14 @@ export default function ParticleField({ mode = "stars", className = "", factor =
     const ctx = canvas.getContext("2d");
     if (!ctx) return undefined;
 
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    // DPR above ~1.5 buys invisible sharpness on 1px dots but multiplies
+    // fill cost — this canvas is full-screen and redrawn every frame.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     const budget = PARTICLE_DENSITY[tier];
     const base = mode === "stars" ? budget.stars : mode === "energy" ? budget.energy : budget.shards;
     const count = Math.max(10, Math.round(base * factor));
+    // Honor the tier's fps budget (mobile renders at 30fps: half the work).
+    const frameMs = 1000 / (budget.fps || 60);
 
     let w = 0;
     let h = 0;
@@ -126,6 +130,48 @@ export default function ParticleField({ mode = "stars", className = "", factor =
       for (let i = 0; i < count; i += 1) parts[i] = spawn(true);
     };
 
+    /**
+     * Pre-baked sprite for stars/energy: one drawImage per particle beats
+     * 1–3 path fills (arc tessellation + state changes) × 220 particles ×
+     * 60fps. Baked once per mount, scaled/alpha'd per particle.
+     */
+    const sprite = (() => {
+      if (mode === "stars") {
+        // soft-edged white dot — stops mimic the old hard arc + faint fringe
+        const s = 24;
+        const c = document.createElement("canvas");
+        c.width = c.height = s;
+        const x = c.getContext("2d");
+        const g = x.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+        g.addColorStop(0, "rgba(245,243,255,1)");
+        g.addColorStop(0.75, "rgba(245,243,255,1)");
+        g.addColorStop(1, "rgba(245,243,255,0)");
+        x.fillStyle = g;
+        x.fillRect(0, 0, s, s);
+        return { el: c, core: 0.75 };
+      }
+      if (mode === "energy") {
+        // three lighter-composited discs (violet halo / lavender mid /
+        // white core) pre-composed at max particle radius (3.4 * 5 = 17px)
+        const s = 34;
+        const c = document.createElement("canvas");
+        c.width = c.height = s;
+        const x = c.getContext("2d");
+        x.globalCompositeOperation = "lighter";
+        const disc = (r, fill) => {
+          x.beginPath();
+          x.arc(s / 2, s / 2, r, 0, 6.2832);
+          x.fillStyle = fill;
+          x.fill();
+        };
+        disc(17, "rgba(124,58,247,0.35)");
+        disc(8.8, "rgba(168,85,247,0.6)");
+        disc(3.4, "rgba(233,213,255,1)");
+        return { el: c, core: 1 };
+      }
+      return null;
+    })();
+
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       w = Math.max(1, rect.width);
@@ -147,7 +193,6 @@ export default function ParticleField({ mode = "stars", className = "", factor =
       if (mode === "stars") {
         const ox = ptr.x * 14;
         const oy = ptr.y * 10;
-        ctx.fillStyle = "#f5f3ff";
         for (const p of parts) {
           p.x += p.vx * dt;
           p.y += p.vy * dt;
@@ -156,9 +201,8 @@ export default function ParticleField({ mode = "stars", className = "", factor =
           if (p.y < -4) p.y = h + 4;
           else if (p.y > h + 4) p.y = -4;
           ctx.globalAlpha = Math.max(0, p.a * (0.55 + 0.45 * Math.sin(t * p.tw + p.ph)));
-          ctx.beginPath();
-          ctx.arc(p.x + ox * p.d, p.y + oy * p.d, p.r, 0, 6.2832);
-          ctx.fill();
+          const d = (p.r * 2) / sprite.core; // sprite's opaque core == old arc radius
+          ctx.drawImage(sprite.el, p.x + ox * p.d - d / 2, p.y + oy * p.d - d / 2, d, d);
         }
         ctx.globalAlpha = 1;
         return;
@@ -170,21 +214,11 @@ export default function ParticleField({ mode = "stars", className = "", factor =
           p.y += p.vy * dt;
           if (p.y < -30) Object.assign(p, spawn(false));
           const x = p.x + Math.sin(t * 0.7 + p.ph) * p.sway;
-          ctx.globalAlpha = p.a * 0.35;
-          ctx.fillStyle = "#7c3aed";
-          ctx.beginPath();
-          ctx.arc(x, p.y, p.r * 5, 0, 6.2832);
-          ctx.fill();
-          ctx.globalAlpha = p.a * 0.6;
-          ctx.fillStyle = "#a855f7";
-          ctx.beginPath();
-          ctx.arc(x, p.y, p.r * 2.6, 0, 6.2832);
-          ctx.fill();
+          // sprite spans 34px for r=3.4 → size scales as 10×r (matches the
+          // old r*5 outer radius) with the three disc alphas baked in
+          const size = p.r * 10;
           ctx.globalAlpha = p.a;
-          ctx.fillStyle = "#e9d5ff";
-          ctx.beginPath();
-          ctx.arc(x, p.y, p.r, 0, 6.2832);
-          ctx.fill();
+          ctx.drawImage(sprite.el, x - size / 2, p.y - size / 2, size, size);
         }
         ctx.globalAlpha = 1;
         ctx.globalCompositeOperation = "source-over";
@@ -347,6 +381,9 @@ export default function ParticleField({ mode = "stars", className = "", factor =
         last = now;
         return;
       }
+      // tier fps budget: skip frames until the cap interval elapses
+      // (dt still spans the skipped frames, so motion speed is unchanged)
+      if (now - last < frameMs - 1) return;
       const dt = Math.min((now - last) / 1000, 0.05);
       last = now;
       render(dt);

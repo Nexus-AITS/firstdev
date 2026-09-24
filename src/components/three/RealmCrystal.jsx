@@ -18,7 +18,7 @@ const tmpE = new THREE.Euler();
  * `active` (hover focus) drives an energy value that brightens, expands and
  * accelerates everything — this is the hover-dominance behaviour in 3D.
  */
-export default function RealmCrystal({ realmId, active = false, reduced = false }) {
+export default function RealmCrystal({ realmId, active = false, reduced = false, quality = "high" }) {
   const { gl, scene } = useThree();
 
   const rootRef = useRef(null);
@@ -52,7 +52,7 @@ export default function RealmCrystal({ realmId, active = false, reduced = false 
     }),
     []
   );
-  const mats = useMemo(() => createRealmMaterials(realmId, kit.tex), [realmId, kit]);
+  const mats = useMemo(() => createRealmMaterials(realmId, kit.tex, quality), [realmId, kit, quality]);
   const cluster = useMemo(() => buildRealmCluster(realmId), [realmId]);
 
   // electric discharge lines (forge/arena) built once, flickered per frame

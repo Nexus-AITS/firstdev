@@ -17,7 +17,8 @@
     "shot:realms": "node scripts/shot-realms.mjs",
     "shot:return": "node scripts/shot-return.mjs",
     "shot:sigil": "node scripts/shot-sigil.mjs",
-    "shot:type": "node scripts/shot-type.mjs"
+    "shot:type": "node scripts/shot-type.mjs",
+    "perf": "node scripts/perf.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.1.0",
