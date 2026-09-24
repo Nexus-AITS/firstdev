@@ -8,7 +8,6 @@ import MetaRow from "../components/event/MetaRow.jsx";
 import NotFound from "./NotFound.jsx";
 import { getEventById } from "../data/events.js";
 import { realms } from "../data/realms.js";
-import { getEventLink } from "../config/eventLinks.js";
 
 export default function EventDetail() {
   const { eventId } = useParams();
@@ -17,7 +16,6 @@ export default function EventDetail() {
   if (!event) return <NotFound />;
 
   const realm = realms[event.realm];
-  const link = getEventLink(event.linkKey);
 
   return (
     <Page>
@@ -117,19 +115,22 @@ export default function EventDetail() {
           <Reveal>
             <div className="hairline mx-auto w-48 md:w-72" aria-hidden />
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
-              The application lives beyond this realm
+              Registration begins at the gateway
             </p>
             <div className="relative mt-8 inline-block">
               <div
                 aria-hidden
                 className="absolute inset-[-60%] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.32),transparent_65%)] blur-2xl"
               />
-              <CinematicButton href={link} className="relative px-10 py-5 md:px-14">
+              <CinematicButton
+                to={`/gateway?event=${event.id}`}
+                className="relative px-10 py-5 md:px-14"
+              >
                 Enter Event
               </CinematicButton>
             </div>
             <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-crystal/35">
-              You will be taken to the real Nexus application
+              Next stop: the Nexus Gateway — then the real application
             </p>
           </Reveal>
         </section>

@@ -33,6 +33,7 @@ npm run preview  # preview build
 | `/events/paradox`  | Non-technical realm         |
 | `/events/arena`    | Esports realm               |
 | `/events/:eventId` | Event detail                |
+| `/gateway`         | Registration gateway        |
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 
@@ -41,6 +42,11 @@ npm run preview  # preview build
 All registration/application URLs live in **`src/config/eventLinks.js`**.
 Replace `https://YOUR-REAL-APP-URL...` with the real application — nothing else
 needs to change.
+
+Every event's "Enter Event" CTA first routes to **`/gateway`** (the themed
+registration hand-off page, `src/pages/Gateway.jsx`), whose single "Enter the
+application" button resolves `APPLICATION_BASE_URL` — so the final link can
+also be swapped in that one file.
 
 Event content lives in **`src/data/events.js`** (add/edit events there).
 
@@ -64,7 +70,8 @@ node verify.mjs   # uses system Chrome (channel: "chrome")
 It checks all routes × desktop/mobile viewports for console errors and
 horizontal overflow, the ENTER NEXUS transition (normal + reduced-motion),
 realm-portal navigation, the mobile menu, keyboard focus order, and that
-external CTAs resolve through `eventLinks.js`.
+event CTAs pass through `/gateway`, which resolves the external link via
+`eventLinks.js`.
 
 ---
 
