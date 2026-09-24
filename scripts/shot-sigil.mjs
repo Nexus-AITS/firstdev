@@ -13,9 +13,7 @@ const EVENTS = [
   "paradox-2065",
   "matrix",
   "pixel-resistance",
-  "neon-vanguard",
-  "velocity-rift",
-  "titan-protocol",
+  "free-fire",
 ];
 
 const browser = await chromium.launch({ channel: "chrome" });

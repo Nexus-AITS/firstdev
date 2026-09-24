@@ -278,7 +278,7 @@ export const SIGIL_VARIANTS = {
     </>
   ),
 
-  /* NEON VANGUARD — tactical 5v5: squad reticle with five pips */
+  /* FREE FIRE — squad battle royale: squad reticle with squad pips */
   squad: (c) => (
     <>
       <circle cx="100" cy="100" r="52" fill="none" stroke={c} strokeWidth="2" />
@@ -294,7 +294,6 @@ export const SIGIL_VARIANTS = {
         [128, 72],
         [72, 128],
         [128, 128],
-        [100, 146],
       ].map(([x, y], i) => (
         <circle
           key={i}

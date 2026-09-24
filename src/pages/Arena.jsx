@@ -23,7 +23,9 @@ export default function Arena() {
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-y border-violet-bright/25 py-3 text-[9px] uppercase tracking-[0.36em] text-lavender/80 md:text-[10px]">
               <span>Arena protocol // season 01</span>
               <span aria-hidden className="hidden h-3 w-px bg-lavender/30 md:block" />
-              <span>{list.length} titles</span>
+              <span>
+                {list.length} {list.length === 1 ? "title" : "titles"}
+              </span>
               <span aria-hidden className="hidden h-3 w-px bg-lavender/30 md:block" />
               <span>Double elimination</span>
               <span aria-hidden className="hidden h-3 w-px bg-lavender/30 md:block" />

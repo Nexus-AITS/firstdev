@@ -25,9 +25,7 @@ export const eventLinks = {
   pixelResistance: "https://YOUR-REAL-APP-URL/events/pixel-resistance",
 
   // The Arena
-  neonVanguard: "https://YOUR-REAL-APP-URL/events/neon-vanguard",
-  velocityRift: "https://YOUR-REAL-APP-URL/events/velocity-rift",
-  titanProtocol: "https://YOUR-REAL-APP-URL/events/titan-protocol",
+  freeFire: "https://YOUR-REAL-APP-URL/events/free-fire",
 
   // Systems
   nexusAI: "https://YOUR-REAL-APP-URL/ai",

@@ -34,7 +34,7 @@ export const realms = {
     tagline: ["READY?"],
     fx: "hud",
     accent: "#a855f7",
-    blurb: "Neon brackets. Zero mercy. Enter as a player, leave as a legend.",
+    blurb: "One island. One squad left. Enter as a player, leave as a legend.",
   },
 };
 

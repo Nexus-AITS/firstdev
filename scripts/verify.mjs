@@ -14,9 +14,10 @@ const ROUTES = [
   ["/events/arena", "THE ARENA"],
   ["/events/nexus-breach", "NEXUS BREACH"],
   ["/events/the-scientist-files", "THE SCIENTIST FILES"],
-  ["/events/neon-vanguard", "NEON VANGUARD"],
+  ["/events/free-fire", "FREE FIRE"],
   ["/ai", "THE NEXUS"],
   ["/about", "EVERYTHING"],
+  ["/gateway", "NEXUS GATEWAY"],
   ["/definitely-missing", "REALM NOT FOUND"],
 ];
 
@@ -113,8 +114,19 @@ for (const vp of VIEWPORTS) {
 
   await page.goto(BASE + "/events/nexus-breach", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const href = await page.getByRole("link", { name: /enter event/i }).getAttribute("href");
+  const enter = await page.getByRole("link", { name: /enter event/i }).getAttribute("href");
+  out(
+    Boolean(enter && enter.startsWith("/gateway?event=nexus-breach")),
+    "event CTA routes through gateway",
+    enter || "missing"
+  );
+
+  await page.goto(BASE + "/gateway?event=nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const href = await page.getByRole("link", { name: /enter the application/i }).getAttribute("href");
   out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
+  const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
+  out(ctxCard === 1, "gateway event context card", `count=${ctxCard}`);
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(600);

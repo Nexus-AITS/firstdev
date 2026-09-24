@@ -5,19 +5,17 @@ import { chromium } from "playwright";
 
 const BASE = "http://localhost:4173";
 const CHECKS = [
-  ["/events/nexus-breach", ["OCT 5 â€” 6, 2026", "LABS Aâ€“E", "RJ45", "valedictory"]],
+  ["/events/nexus-breach", ["OCT 5 — 6, 2026", "LABS A–E", "RJ45", "valedictory"]],
   ["/events/vision-2065", ["OCT 5, 2026", "CLASS ROOMS", "Advance registration"]],
-  ["/events/circuits-of-nexus", ["OCT 5, 2026", "GROUND FLOOR", "materials and circuits"]],
+  ["/events/circuits-of-nexus", ["OCT 7, 2026", "GROUND FLOOR", "materials and circuits"]],
   ["/events/ai-turing-gambit", ["OCT 6, 2026", "2 CLASSROOMS", "NEXUS AI"]],
   ["/events/code-rebuilding", ["OCT 6, 2026", "LABS D & E", "corrupted code"]],
   ["/events/the-scientist-files", ["OCT 6, 2026", "COLLEGE PREMISES", "three fictional case files"]],
   ["/events/paradox-2065", ["OCT 6, 2026", "E-BLOCK CLASSROOM", "What If?"]],
   ["/events/shutter-quest", ["OCT 6, 2026", "AI-generated"]],
-  ["/events/matrix", ["OCT 6, 2026", "10:00 AM â€“ 12:30 PM"]],
+  ["/events/matrix", ["OCT 6, 2026", "10:00 AM – 12:30 PM"]],
   ["/events/pixel-resistance", ["OCT 6, 2026", "2 CLASSROOMS", "plagiarism"]],
-  ["/events/neon-vanguard", ["AFTER COLLEGE HOURS"]],
-  ["/events/velocity-rift", ["AFTER COLLEGE HOURS"]],
-  ["/events/titan-protocol", ["AFTER COLLEGE HOURS"]],
+  ["/events/free-fire", ["AFTER COLLEGE HOURS", "FREE FIRE", "MAIN STAGE"]],
 ];
 
 const browser = await chromium.launch({ channel: "chrome" });
