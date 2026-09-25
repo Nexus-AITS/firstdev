@@ -51,6 +51,10 @@ export default function Footer() {
           <p>Connect • Create • Transcend</p>
           <p>© {new Date().getFullYear()} NEXUS — All realms reserved.</p>
         </div>
+
+        <p className="mt-6 text-center text-[10px] uppercase tracking-[0.32em] text-crystal/35 md:text-left">
+          Developed by Omprakash Chandragiri and Sai Sujith BV from CSIT Department
+        </p>
       </div>
     </footer>
   );
