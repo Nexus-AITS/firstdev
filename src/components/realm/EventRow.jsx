@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
+import { formatMaxSize } from "../../data/events.js";
 
 function ExploreLink({ id }) {
   return (
@@ -61,7 +62,13 @@ export default function EventRow({ event, index = 0 }) {
             {event.tagline}
           </p>
 
-          <div className="mt-7">
+          {event.payment ? (
+            <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
+              ₹{event.payment} · {formatMaxSize(event.maxSize)}
+            </p>
+          ) : null}
+
+          <div className="mt-6">
             <ExploreLink id={event.id} />
           </div>
         </Reveal>

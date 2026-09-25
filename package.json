@@ -13,6 +13,8 @@
     "verify:data": "node scripts/verify-data.mjs",
     "stress": "node scripts/stress-scroll.mjs",
     "shot": "node scripts/shot.mjs",
+    "shot:bundled": "node scripts/shot-bundled.mjs",
+    "shot:pay": "node scripts/shot-pay.mjs",
     "shot:events": "node scripts/shot-events.mjs",
     "shot:realms": "node scripts/shot-realms.mjs",
     "shot:return": "node scripts/shot-return.mjs",

@@ -78,7 +78,7 @@ event CTAs pass through `/gateway`, which resolves the external link via
 ## Performance & security (built in)
 
 - **Route-level code splitting** — every page except the landing hero is a
-  `React.lazy` chunk, so the entry bundle no longer carries all nine pages.
+  `React.lazy` chunk, so the entry bundle no longer carries all ten pages.
 - **WebGL off the critical path** — three.js (the largest dependency) loads
   behind `LazyCrystalCanvas` / `LazyRealmStage` with on-brand CSS fallbacks
   (nebula backdrop / faceted silhouette); first paint never waits for it.

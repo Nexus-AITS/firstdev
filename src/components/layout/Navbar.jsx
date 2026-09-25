@@ -7,6 +7,7 @@ import MobileMenu from "./MobileMenu.jsx";
 const LINKS = [
   { to: "/", label: "HOME" },
   { to: "/events", label: "EVENTS" },
+  { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },
   { to: "/about", label: "ABOUT" },
 ];

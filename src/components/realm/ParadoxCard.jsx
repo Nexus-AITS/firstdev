@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
+import { formatMaxSize } from "../../data/events.js";
 
 const SHIFTS = ["", "md:ml-[7%]", "md:ml-[13%]", "md:ml-[4%]", "md:ml-[10%]"];
 const TILTS = [-0.6, 0.5, -0.4, 0.7, -0.5];
@@ -54,6 +55,12 @@ export default function ParadoxCard({ event, index = 0 }) {
               <p className="mt-3 whitespace-pre-line text-sm leading-relaxed tracking-wide text-crystal/60">
                 {event.tagline}
               </p>
+
+              {event.payment ? (
+                <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.34em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
+                  ₹{event.payment} · {formatMaxSize(event.maxSize)}
+                </p>
+              ) : null}
 
               <Link
                 to={`/events/${event.id}`}

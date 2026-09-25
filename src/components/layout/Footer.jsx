@@ -6,6 +6,7 @@ const QUICK = [
   { to: "/events/forge", label: "THE FORGE" },
   { to: "/events/paradox", label: "THE PARADOX" },
   { to: "/events/arena", label: "THE ARENA" },
+  { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },
   { to: "/about", label: "ABOUT" },
 ];

@@ -18,6 +18,7 @@ const ROUTES = [
   ["/ai", "THE NEXUS"],
   ["/about", "EVERYTHING"],
   ["/gateway", "NEXUS GATEWAY"],
+  ["/bundled", "BUNDLED"],
   ["/definitely-missing", "REALM NOT FOUND"],
 ];
 
@@ -127,6 +128,45 @@ for (const vp of VIEWPORTS) {
   out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
   const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
   out(ctxCard === 1, "gateway event context card", `count=${ctxCard}`);
+
+  /* bundle cards all hand off to the gateway, which shows the bundle card */
+  await page.goto(BASE + "/bundled", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const claims = await page.locator('main a[href^="/gateway?bundle="]').count();
+  out(claims === 8, "bundle CTAs route through gateway", `count=${claims}`);
+  await page.locator('main a[href^="/gateway?bundle="]').first().click();
+  await page.waitForTimeout(900);
+  const bUrl = new URL(page.url());
+  const bundleCard = await page.getByText("per bundle").count();
+  out(
+    bUrl.pathname === "/gateway" &&
+      bUrl.searchParams.get("bundle") === "bundled-299" &&
+      bundleCard >= 1,
+    "bundle gateway hand-off",
+    `${bUrl.pathname}${bUrl.search} card=${bundleCard}`
+  );
+
+  /* per-event pricing: payment cell + CTA billing line on the detail page */
+  await page.goto(BASE + "/events/nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const payLabel = await page.getByText("Payment", { exact: true }).count();
+  const payPrice = await page.getByText("₹349", { exact: true }).count();
+  out(
+    payLabel === 1 && payPrice >= 2,
+    "event payment data surfaced (meta + CTA)",
+    `label=${payLabel} price=${payPrice}`
+  );
+
+  /* gateway card and paradox list carry the same price data */
+  await page.goto(BASE + "/gateway?event=nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const gwPrice = await page.getByText("₹349").count();
+  out(gwPrice >= 1, "gateway card shows event price", `count=${gwPrice}`);
+
+  await page.goto(BASE + "/events/paradox", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const soloPrice = await page.getByText("₹149 · INDIVIDUAL").count();
+  out(soloPrice >= 4, "paradox list shows individual pricing", `count=${soloPrice}`);
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(600);

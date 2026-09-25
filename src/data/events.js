@@ -3,6 +3,7 @@
  * Add / edit events here; components never hardcode content.
  *
  * linkKey maps to src/config/eventLinks.js
+ * payment = entry fee in ₹, maxSize = team cap ("individual" = solo entry).
  */
 export const events = [
   /* ---------------------------- THE FORGE ---------------------------- */
@@ -20,6 +21,8 @@ export const events = [
     date: "OCT 5 — 6, 2026",
     venue: "E-BLOCK · LABS A–E · SEMINAR HALL",
     teamSize: "2 — 5 MEMBERS",
+    payment: 349,
+    maxSize: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "fracture",
@@ -38,7 +41,9 @@ export const events = [
     ],
     date: "OCT 5, 2026",
     venue: "CLASS ROOMS",
-    teamSize: "1 — 4 MEMBERS",
+    teamSize: "1 — 5 MEMBERS",
+    payment: 249,
+    maxSize: 5,
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "temporal",
@@ -57,7 +62,9 @@ export const events = [
     ],
     date: "OCT 7, 2026",
     venue: "MAIN BLOCK — GROUND FLOOR",
-    teamSize: "1 — 4 MEMBERS",
+    teamSize: "1 — 5 MEMBERS",
+    payment: 249,
+    maxSize: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "circuit",
@@ -76,7 +83,9 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "MAIN BLOCK — 2 CLASSROOMS",
-    teamSize: "1 — 2 MEMBERS",
+    teamSize: "1 — 5 MEMBERS",
+    payment: 249,
+    maxSize: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "neural",
@@ -95,7 +104,9 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "LABS D & E",
-    teamSize: "1 — 3 MEMBERS",
+    teamSize: "1 — 5 MEMBERS",
+    payment: 249,
+    maxSize: 5,
     status: "REGISTRATION OPEN",
     accent: "lavender",
     sigil: "rebuild",
@@ -116,6 +127,8 @@ export const events = [
     date: "OCT 6, 2026",
     venue: "COLLEGE PREMISES",
     teamSize: "2 — 4 MEMBERS",
+    payment: 249,
+    maxSize: 4,
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "mystery",
@@ -134,7 +147,9 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "E-BLOCK CLASSROOM",
-    teamSize: "1 — 3 MEMBERS",
+    teamSize: "SOLO",
+    payment: 149,
+    maxSize: "individual",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "timeline",
@@ -154,6 +169,8 @@ export const events = [
     date: "OCT 6, 2026",
     venue: "THE PARADOX — CITY SECTORS",
     teamSize: "SOLO",
+    payment: 149,
+    maxSize: "individual",
     status: "REGISTRATION OPEN",
     accent: "lavender",
     sigil: "lens",
@@ -172,7 +189,9 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "THE PARADOX — GLITCH DECK",
-    teamSize: "1 — 2 MEMBERS",
+    teamSize: "SOLO",
+    payment: 149,
+    maxSize: "individual",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "matrix",
@@ -192,6 +211,8 @@ export const events = [
     date: "OCT 6, 2026",
     venue: "MAIN BLOCK — 2 CLASSROOMS",
     teamSize: "SOLO",
+    payment: 149,
+    maxSize: "individual",
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "pixel",
@@ -227,6 +248,13 @@ export function getEventById(id) {
 
 export function getEventsByRealm(realmId) {
   return events.filter((event) => event.realm === realmId);
+}
+
+/** Human label for a max team size — "5" -> "MAX SIZE 5". */
+export function formatMaxSize(maxSize) {
+  if (maxSize === "individual") return "INDIVIDUAL";
+  if (typeof maxSize === "number") return `MAX SIZE ${maxSize}`;
+  return "";
 }
 
 export default events;

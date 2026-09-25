@@ -5,8 +5,9 @@ import CinematicButton from "../components/ui/CinematicButton.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import { APPLICATION_BASE_URL } from "../config/eventLinks.js";
-import { getEventById } from "../data/events.js";
+import { getEventById, formatMaxSize } from "../data/events.js";
 import { realms } from "../data/realms.js";
+import { getBundleById, describeInclude } from "../data/bundles.js";
 
 /**
  * Registration hand-off — every event's "Enter Event" CTA lands here first.
@@ -36,6 +37,7 @@ export default function Gateway() {
   const [searchParams] = useSearchParams();
   const event = getEventById(searchParams.get("event"));
   const realm = event ? realms[event.realm] : null;
+  const bundle = getBundleById(searchParams.get("bundle"));
 
   return (
     <Page>
@@ -69,7 +71,9 @@ export default function Gateway() {
             <p className="mx-auto mt-7 max-w-xl text-sm leading-relaxed tracking-wide text-crystal/60">
               {event
                 ? `One threshold remains. Cross the gateway and the real Nexus application will take your registration for ${event.title}.`
-                : "Every registration in the Nexus crosses a single threshold — this gateway hands you over to the real application, where your seat is claimed."}
+                : bundle
+                  ? `One threshold remains. Cross the gateway and the real Nexus application will take your payment for the ${bundle.name} ${bundle.price} bundle.`
+                  : "Every registration in the Nexus crosses a single threshold — this gateway hands you over to the real application, where your seat is claimed."}
             </p>
           </Reveal>
         </section>
@@ -100,12 +104,71 @@ export default function Gateway() {
                   <h2 className="mt-3 font-display text-[clamp(1.5rem,3vw,2.4rem)] leading-tight tracking-[0.07em] text-crystal">
                     {event.title}
                   </h2>
+                  {event.payment ? (
+                    <p className="mt-2 font-display text-[1.35rem] font-medium text-gold [text-shadow:0_0_18px_rgba(245,215,142,0.4)]">
+                      ₹{event.payment}
+                      <span className="ml-3 align-middle text-[9px] font-medium uppercase tracking-[0.3em] text-crystal/50 [text-shadow:none]">
+                        {formatMaxSize(event.maxSize)}
+                      </span>
+                    </p>
+                  ) : null}
                   <p className="mt-2 text-[10px] uppercase tracking-[0.3em] text-crystal/50">
                     {realm ? `Realm — ${realm.name}` : null}
                     {realm ? " · " : null}
                     {event.date}
                   </p>
                 </div>
+              </div>
+            </Reveal>
+          </section>
+        ) : null}
+
+        {/* selected bundle context (from ?bundle=<id>) */}
+        {bundle && !event ? (
+          <section
+            className="relative z-10 mx-auto mt-14 max-w-[1680px] px-5 md:mt-20 md:px-10"
+            aria-label="Selected bundle"
+          >
+            <Reveal>
+              <div className="glass-panel mx-auto max-w-3xl px-6 py-7 md:px-9 md:py-8">
+                <div className="flex flex-col items-center gap-5 md:flex-row md:gap-8">
+                  <div className="flex shrink-0 flex-col items-center md:items-start">
+                    <span className="text-[11px] tracking-[0.4em] text-gold/85">
+                      {bundle.number}
+                    </span>
+                    <p className="mt-2 font-display text-[clamp(2.2rem,4vw,3.2rem)] font-medium leading-none text-crystal text-glow">
+                      ₹{bundle.price}
+                    </p>
+                    <span className="mt-1.5 text-[9px] uppercase tracking-[0.34em] text-crystal/40">
+                      per bundle
+                    </span>
+                  </div>
+
+                  <div aria-hidden className="h-px w-full bg-white/10 md:h-14 md:w-px" />
+
+                  <div className="min-w-0 flex-1 text-center md:text-left">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.34em] text-gold/90 [text-shadow:0_0_18px_rgba(245,215,142,0.45)]">
+                      Selected bundle
+                    </p>
+                    <h2 className="mt-3 font-display text-[clamp(1.5rem,3vw,2.4rem)] leading-tight tracking-[0.07em] text-crystal">
+                      {bundle.name}
+                    </h2>
+                    <p className="mt-2 text-[10px] uppercase tracking-[0.28em] text-crystal/50">
+                      {bundle.includes.length} inclusions · pick your events at checkout
+                    </p>
+                  </div>
+                </div>
+
+                <ul className="mt-6 flex flex-wrap justify-center gap-2 border-t border-white/10 pt-5 md:justify-start">
+                  {bundle.includes.map((item, i) => (
+                    <li
+                      key={`${describeInclude(item)}-${i}`}
+                      className="border border-lavender/25 px-3 py-1.5 text-[9px] font-medium uppercase tracking-[0.2em] text-crystal/70"
+                    >
+                      {describeInclude(item)}
+                    </li>
+                  ))}
+                </ul>
               </div>
             </Reveal>
           </section>
@@ -119,7 +182,11 @@ export default function Gateway() {
           <Reveal>
             <div className="hairline mx-auto w-48 md:w-72" aria-hidden />
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
-              {event ? `Ready to register for ${event.title}` : "Registration begins beyond this page"}
+              {event
+                ? `Ready to register for ${event.title}`
+                : bundle
+                  ? `Ready to claim your ${bundle.name} ${bundle.price}`
+                  : "Registration begins beyond this page"}
             </p>
             <div className="relative mt-8 inline-block">
               <div
@@ -160,10 +227,17 @@ export default function Gateway() {
         <section className="relative z-10 mx-auto max-w-[1680px] px-5 pb-36 text-center md:px-10">
           <Reveal delay={0.15}>
             <Link
-              to={event ? `/events/${event.id}` : "/events"}
+              to={
+                event ? `/events/${event.id}` : bundle ? "/bundled" : "/events"
+              }
               className="mt-16 inline-block text-[10px] uppercase tracking-[0.4em] text-crystal/40 transition-colors hover:text-lavender"
             >
-              ← {event ? "Return to the event" : "Return to the realms"}
+              ←{" "}
+              {event
+                ? "Return to the event"
+                : bundle
+                  ? "Return to the bundles"
+                  : "Return to the realms"}
             </Link>
           </Reveal>
         </section>
