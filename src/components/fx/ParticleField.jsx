@@ -23,7 +23,11 @@ export default function ParticleField({ mode = "stars", className = "", factor =
 
     // DPR above ~1.5 buys invisible sharpness on 1px dots but multiplies
     // fill cost — this canvas is full-screen and redrawn every frame.
-    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    // Phones ship DPR 2–3, so cap by tier: 1.2 on a 390×844 mobile
+    // viewport is ~36% fewer pixels than the old flat 1.5 cap, and the
+    // difference is invisible on 1–3px dots behind the vignette.
+    const dprCap = tier === "mobile" ? 1.2 : tier === "tablet" ? 1.3 : 1.5;
+    const dpr = Math.min(window.devicePixelRatio || 1, dprCap);
     const budget = PARTICLE_DENSITY[tier];
     const base = mode === "stars" ? budget.stars : mode === "energy" ? budget.energy : budget.shards;
     const count = Math.max(10, Math.round(base * factor));

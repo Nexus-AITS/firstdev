@@ -16,12 +16,15 @@ export default function MobileMenu({ links, onClose }) {
   }, [onClose]);
 
   return (
+    // No backdrop blur: the menu is mobile-only, sits over the live hero,
+    // and bg-void/95 made a full-screen blur-2xl invisible but still
+    // re-blurred the page on every frame of the clip-path reveal.
     <motion.div
       id="nexus-mobile-menu"
       role="dialog"
       aria-modal="true"
       aria-label="Navigation menu"
-      className="fixed inset-0 z-50 flex flex-col justify-center bg-void/95 px-8 backdrop-blur-2xl md:hidden"
+      className="fixed inset-0 z-50 flex flex-col justify-center bg-void/95 px-8 md:hidden"
       initial={{ opacity: 0, clipPath: "circle(0% at calc(100% - 2.5rem) 2rem)" }}
       animate={{ opacity: 1, clipPath: "circle(150% at calc(100% - 2.5rem) 2rem)" }}
       exit={{ opacity: 0, clipPath: "circle(0% at calc(100% - 2.5rem) 2rem)" }}

@@ -50,7 +50,10 @@ export default function Navbar() {
         className={[
           "fixed inset-x-0 top-0 z-40 transition-colors duration-500",
           scrolled
-            ? "border-b border-white/5 bg-void/70 backdrop-blur-md"
+            ? // fixed bar over the live hero: it re-blurs whatever animates
+              // behind it on every frame — phones get the lighter sm blur,
+              // md+ keeps the original 12px
+              "border-b border-white/5 bg-void/70 backdrop-blur-sm md:backdrop-blur-md"
             : "border-b border-transparent bg-transparent",
         ].join(" ")}
       >
