@@ -11,3 +11,8 @@ yarn-error.log*
 # generated artifacts — verification reports, screenshots, server logs
 artifacts/
 *.log
+
+# supabase CLI local state (schema SQL files ARE tracked)
+supabase/.temp/
+supabase/.branches/
+

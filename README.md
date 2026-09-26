@@ -36,6 +36,20 @@ npm run preview  # preview build
 | `/gateway`         | Registration gateway        |
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
+| `/bundled`         | Bundled passes              |
+
+## Data model (Supabase — staged)
+
+The registration schema — **Name, Roll Number, College name, Year, Department,
+Phone Number, Email, UTR number, Payment status** — lives in
+`supabase/migrations/20260926000000_create_registrations.sql`
+(with fake sample rows in `supabase/seed.sql` and full notes in
+`docs/supabase-data-model.md`). Payments follow a **UTR verification flow**:
+the participant submits a UTR number (`unverified` → "not verified"), then an
+admin confirms it (`verified`); rejected UTRs can be re-submitted. The schema
+is **not wired into the app yet**: no client library, no env keys, and RLS is
+enabled with zero policies so the table is inaccessible over the API until
+integration work begins.
 
 ## Centralized external links
 
