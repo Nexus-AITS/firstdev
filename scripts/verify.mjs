@@ -17,7 +17,8 @@ const ROUTES = [
   ["/events/free-fire", "FREE FIRE"],
   ["/ai", "THE NEXUS"],
   ["/about", "EVERYTHING"],
-  ["/gateway", "NEXUS GATEWAY"],
+  ["/register", "EVENT REGISTER"],
+  ["/gateway", "EVENT REGISTER"], // legacy hand-off redirects into /register
   ["/bundled", "BUNDLED"],
   ["/admin", "ADMIN CONSOLE"],
   ["/definitely-missing", "REALM NOT FOUND"],
@@ -118,33 +119,35 @@ for (const vp of VIEWPORTS) {
   await page.waitForTimeout(900);
   const enter = await page.getByRole("link", { name: /enter event/i }).getAttribute("href");
   out(
-    Boolean(enter && enter.startsWith("/gateway?event=nexus-breach")),
-    "event CTA routes through gateway",
+    Boolean(enter && enter.startsWith("/register?event=nexus-breach")),
+    "event CTA routes to register wizard",
     enter || "missing"
   );
 
-  await page.goto(BASE + "/gateway?event=nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.goto(BASE + "/register?event=nexus-breach", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const href = await page.getByRole("link", { name: /enter the application/i }).getAttribute("href");
-  out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
   const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
-  out(ctxCard === 1, "gateway event context card", `count=${ctxCard}`);
+  out(ctxCard === 1, "register event context card", `count=${ctxCard}`);
+  out(
+    await page.locator("#reg-step-details").isVisible(),
+    "register opens on details step",
+    ""
+  );
 
-  /* bundle cards all hand off to the gateway, which shows the bundle card */
+  /* bundle cards all hand off to the register wizard */
   await page.goto(BASE + "/bundled", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const claims = await page.locator('main a[href^="/gateway?bundle="]').count();
-  out(claims === 8, "bundle CTAs route through gateway", `count=${claims}`);
-  await page.locator('main a[href^="/gateway?bundle="]').first().click();
+  const claims = await page.locator('main a[href^="/register?bundle="]').count();
+  out(claims === 8, "bundle CTAs route to register", `count=${claims}`);
+  await page.locator('main a[href^="/register?bundle="]').first().click();
   await page.waitForTimeout(900);
   const bUrl = new URL(page.url());
-  const bundleCard = await page.getByText("per bundle").count();
   out(
-    bUrl.pathname === "/gateway" &&
+    bUrl.pathname === "/register" &&
       bUrl.searchParams.get("bundle") === "bundled-299" &&
-      bundleCard >= 1,
-    "bundle gateway hand-off",
-    `${bUrl.pathname}${bUrl.search} card=${bundleCard}`
+      (await page.locator("#reg-step-details").isVisible()),
+    "bundle register hand-off",
+    `${bUrl.pathname}${bUrl.search}`
   );
 
   /* per-event pricing: payment cell + CTA billing line on the detail page */
@@ -158,11 +161,11 @@ for (const vp of VIEWPORTS) {
     `label=${payLabel} price=${payPrice}`
   );
 
-  /* gateway card and paradox list carry the same price data */
-  await page.goto(BASE + "/gateway?event=nexus-breach", { waitUntil: "domcontentloaded" });
+  /* register fee strip and paradox list carry the same price data */
+  await page.goto(BASE + "/register?event=nexus-breach", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
   const gwPrice = await page.getByText("₹349").count();
-  out(gwPrice >= 1, "gateway card shows event price", `count=${gwPrice}`);
+  out(gwPrice >= 1, "register card shows event price", `count=${gwPrice}`);
 
   await page.goto(BASE + "/events/paradox", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
@@ -216,6 +219,82 @@ for (const vp of VIEWPORTS) {
     "reduced-motion transition",
     `path=${path}${errs[0] ? ` err=${errs[0]}` : ""}`
   );
+  await ctx.close();
+}
+
+/* -------- register wizard: details → payment QR → UTR → success -------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on("pageerror", (e) => errs.push(`PAGEERROR: ${e.message}`));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !benign(m.text())) errs.push(m.text());
+  });
+
+  await page.goto(BASE + "/events/nexus-breach", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  await page.getByRole("link", { name: /enter event/i }).click();
+  await page.waitForTimeout(900);
+  const u = new URL(page.url());
+  out(
+    u.pathname === "/register" && u.searchParams.get("event") === "nexus-breach",
+    "wizard entry (event CTA → /register)",
+    `${u.pathname}${u.search}`
+  );
+
+  // step 1 — details form
+  out(await page.locator("#reg-step-details").isVisible(), "wizard step 1: details form");
+  await page.fill("#reg-name", "Tessa Verify");
+  await page.fill("#reg-roll", "24T99A0007");
+  await page.fill("#reg-college", "AITS Tirupati");
+  await page.selectOption("#reg-year", "2nd");
+  await page.fill("#reg-dept", "ECE");
+  await page.fill("#reg-phone", "9000000099");
+  await page.fill("#reg-email", `tessa.verify+${Date.now()}@example.com`);
+  await page.click("#reg-details-next");
+  await page.waitForTimeout(700);
+
+  // step 2 — payment QR
+  const payVisible = await page.locator("#reg-step-pay").isVisible().catch(() => false);
+  const qrVisible = await page.locator("#reg-qr").isVisible().catch(() => false);
+  const feeShown = (await page.getByText("₹349").count()) >= 1;
+  out(
+    payVisible && qrVisible && feeShown,
+    "wizard step 2: payment QR + fee",
+    `pay=${payVisible} qr=${qrVisible} fee=${feeShown}`
+  );
+  await page.click("#reg-pay-next");
+  await page.waitForTimeout(500);
+
+  // step 3 — UTR field
+  out(await page.locator("#reg-step-utr").isVisible(), "wizard step 3: UTR field");
+  await page.fill("#reg-utr", "998877665511");
+  await page.click("#reg-utr-submit");
+  // local write is instant; the screen appears after the best-effort cloud
+  // sync resolves (may take a few seconds on a cold connection)
+  const success = await page
+    .locator("#reg-success")
+    .waitFor({ state: "visible", timeout: 12000 })
+    .then(() => true)
+    .catch(() => false);
+  out(success, "wizard success screen");
+
+  // the row must land in the store /admin reads, unverified with the UTR
+  const stored = await page.evaluate(() => {
+    try {
+      const rows = JSON.parse(localStorage.getItem("nexus.registrations.v1") || "[]");
+      return rows.find((r) => r.email && r.email.startsWith("tessa.verify+")) || null;
+    } catch {
+      return null;
+    }
+  });
+  out(
+    Boolean(stored && stored.payment_status === "unverified" && stored.utr_number === "998877665511"),
+    "wizard persists to admin store (unverified + UTR)",
+    stored ? `status=${stored.payment_status} utr=${stored.utr_number}` : "row missing"
+  );
+  out(errs.length === 0, "wizard console errors", errs[0] || "none");
   await ctx.close();
 }
 

@@ -115,7 +115,7 @@ export default function EventDetail() {
           <Reveal>
             <div className="hairline mx-auto w-48 md:w-72" aria-hidden />
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
-              Registration begins at the gateway
+              Registration happens right here in the Nexus
             </p>
             {event.payment ? (
               <div className="mt-6 flex items-center justify-center gap-4">
@@ -134,15 +134,15 @@ export default function EventDetail() {
                 aria-hidden
                 className="absolute inset-[-60%] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.32),transparent_65%)] blur-2xl"
               />
-              <CinematicButton
-                to={`/gateway?event=${event.id}`}
-                className="relative px-10 py-5 md:px-14"
-              >
-                Enter Event
-              </CinematicButton>
+                <CinematicButton
+                  to={`/register?event=${event.id}`}
+                  className="relative px-10 py-5 md:px-14"
+                >
+                  Enter Event
+                </CinematicButton>
             </div>
             <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-crystal/35">
-              Next stop: the Nexus Gateway — then the real application
+              Details → payment QR → UTR — one short crossing
             </p>
           </Reveal>
         </section>

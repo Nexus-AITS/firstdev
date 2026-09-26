@@ -22,6 +22,7 @@ const EventDetail = lazy(() => import("./pages/EventDetail.jsx"));
 const Bundled = lazy(() => import("./pages/Bundled.jsx"));
 const Admin = lazy(() => import("./pages/Admin.jsx"));
 const Gateway = lazy(() => import("./pages/Gateway.jsx"));
+const Register = lazy(() => import("./pages/Register.jsx"));
 const NexusAI = lazy(() => import("./pages/NexusAI.jsx"));
 const About = lazy(() => import("./pages/About.jsx"));
 const NotFound = lazy(() => import("./pages/NotFound.jsx"));
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="/bundled" element={<Bundled />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/gateway" element={<Gateway />} />
+              <Route path="/register" element={<Register />} />
               <Route path="/ai" element={<NexusAI />} />
               <Route path="/about" element={<About />} />
               <Route path="*" element={<NotFound />} />

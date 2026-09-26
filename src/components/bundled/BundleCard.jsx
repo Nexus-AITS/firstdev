@@ -83,7 +83,7 @@ export default function BundleCard({ bundle, index = 0 }) {
           </ul>
 
           <div className="relative mt-auto pt-7">
-            <CinematicButton to={`/gateway?bundle=${bundle.id}`} className="w-full">
+            <CinematicButton to={`/register?bundle=${bundle.id}`} className="w-full">
               Claim this bundle
             </CinematicButton>
           </div>

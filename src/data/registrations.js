@@ -360,3 +360,76 @@ export function removeRegistration(id) {
 export function resetRegistrations() {
   return persist(clone(SEED));
 }
+
+/* ---------- registration intake (the /register wizard) ---------- */
+
+/**
+ * Client-side mirror of the SQL CHECKs — same rules the remote table enforces,
+ * so bad rows never reach localStorage or PostgREST.
+ * Returns null when valid, or a human-readable error string.
+ */
+export function validateRegistration(v) {
+  const t = (s) => String(s ?? "").trim();
+  if (t(v.name).length < 2 || t(v.name).length > 120) return "Name must be 2–120 characters.";
+  if (t(v.roll_number).length < 3 || t(v.roll_number).length > 40) return "Roll number must be 3–40 characters.";
+  if (t(v.college_name).length < 2 || t(v.college_name).length > 160) return "College name must be 2–160 characters.";
+  if (!["1st", "2nd", "3rd", "4th"].includes(v.year)) return "Select an academic year.";
+  if (t(v.department).length < 2 || t(v.department).length > 80) return "Department must be 2–80 characters.";
+  const phone = t(v.phone_number);
+  if (phone.length < 8 || phone.length > 15 || !/^[+0-9][0-9 -]*[0-9]$/.test(phone)) {
+    return "Phone must be 8–15 chars: digits with optional +, space or -.";
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t(v.email))) return "Enter a valid email address.";
+  if (v.utr_number != null) {
+    const utr = t(v.utr_number);
+    if (!/^[A-Za-z0-9-]{6,30}$/.test(utr)) return "UTR must be 6–30 letters, digits or dashes.";
+  }
+  return null;
+}
+
+const uuid = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+      });
+
+/**
+ * Record a completed /register wizard submission locally.
+ * End state matches the schema: paid flow → "unverified" (UTR in, waiting for
+ * admin confirm); free event → "awaiting_utr" (registered, nothing due).
+ * Maps to: supabase.from("registrations").insert(row) — src/lib/supabase.js
+ * sends the same row to the remote project.
+ * Returns { row } on success or { error } with a message.
+ */
+export function addRegistration(input) {
+  const error = validateRegistration(input);
+  if (error) return { error };
+  const rows = listRegistrations();
+  const email = String(input.email).trim().toLowerCase();
+  if (rows.some((r) => String(r.email).trim().toLowerCase() === email)) {
+    return { error: "This email is already registered." };
+  }
+  const hasUtr = input.utr_number != null && String(input.utr_number).trim() !== "";
+  const ts = nowISO();
+  const row = {
+    id: uuid(),
+    name: String(input.name).trim(),
+    roll_number: String(input.roll_number).trim(),
+    college_name: String(input.college_name).trim(),
+    year: input.year,
+    department: String(input.department).trim(),
+    phone_number: String(input.phone_number).trim(),
+    email,
+    payment_status: hasUtr ? "unverified" : "awaiting_utr",
+    utr_number: hasUtr ? String(input.utr_number).trim() : null,
+    utr_submitted_at: hasUtr ? ts : null,
+    payment_verified_at: null,
+    payment_verified_by: null,
+    created_at: ts,
+    updated_at: ts,
+  };
+  persist([row, ...rows]);
+  return { row };
+}

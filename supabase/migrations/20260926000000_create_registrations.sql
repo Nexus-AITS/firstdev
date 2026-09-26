@@ -1,8 +1,9 @@
 -- =============================================================================
 -- NEXUS — Supabase data model :: public.registrations
 -- Migration : 20260926000000_create_registrations.sql
--- Status    : STAGED — kept in-repo for future development.
---             Not applied to any project; not referenced by app code.
+-- Status    : APPLIED 2026-09-26 to project xvteqcvvjlxhwijwxbbq via
+--             npm run db:migrate (Management API + PAT in .env).
+--             Idempotent: safe to run more than once.
 -- Fields    : Name, Roll Number, College name, Year, Department,
 --             Phone Number, Email, UTR number, Payment status
 -- Pay flow  : participant submits UTR -> unverified -> admin confirms -> verified
@@ -145,7 +146,7 @@ alter table public.registrations enable row level security;
 
 -- 7) dashboard documentation ---------------------------------------------------
 comment on table public.registrations is
-  'NEXUS participant registrations with UTR payment verification. Staged schema — not yet connected to the frontend.';
+  'NEXUS participant registrations with UTR payment verification. Schema applied 2026-09-26; frontend still uses the local mirror until RLS policies land.';
 comment on column public.registrations.payment_status      is 'awaiting_utr (no UTR) -> unverified (UTR submitted, NOT verified) -> verified (admin confirmed) | rejected. Default: awaiting_utr.';
 comment on column public.registrations.utr_number          is 'UTR / transaction reference entered by the participant; unique across all registrations.';
 comment on column public.registrations.utr_submitted_at    is 'When the UTR was submitted (auto-stamped by trigger on insert / re-submit).';

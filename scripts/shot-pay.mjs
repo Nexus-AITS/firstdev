@@ -29,14 +29,29 @@ await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
 await page.waitForTimeout(1500);
 await page.screenshot({ path: "artifacts/screenshots/pay-detail-cta.png" });
 
-// gateway event context card with price
-await page.goto("http://localhost:4173/gateway?event=nexus-breach", {
+// register wizard — step 1: details (with fee strip + context)
+await page.goto("http://localhost:4173/register?event=nexus-breach", {
   waitUntil: "networkidle",
 });
 await page.waitForTimeout(2200);
-await page.evaluate(() => window.scrollTo(0, 560));
-await page.waitForTimeout(1200);
-await page.screenshot({ path: "artifacts/screenshots/pay-gateway.png" });
+await page.screenshot({ path: "artifacts/screenshots/pay-register-details.png" });
+
+// step 2: payment QR
+await page.fill("#reg-name", "Sample Participant");
+await page.fill("#reg-roll", "24S00A0001");
+await page.fill("#reg-college", "AITS Tirupati");
+await page.selectOption("#reg-year", "2nd");
+await page.fill("#reg-dept", "CSE");
+await page.fill("#reg-phone", "9000000000");
+await page.fill("#reg-email", "sample.participant@example.com");
+await page.click("#reg-details-next");
+await page.waitForTimeout(900);
+await page.screenshot({ path: "artifacts/screenshots/pay-register-qr.png" });
+
+// step 3: UTR field
+await page.click("#reg-pay-next");
+await page.waitForTimeout(700);
+await page.screenshot({ path: "artifacts/screenshots/pay-register-utr.png" });
 await page.close();
 
 // forge rows with price lines
@@ -75,7 +90,7 @@ await mob.close();
 
 await browser.close();
 console.log(
-  "screenshots saved: pay-detail-meta, pay-detail-cta, pay-gateway, pay-forge, pay-paradox, pay-detail-mob"
+  "screenshots saved: pay-detail-meta, pay-detail-cta, pay-register-details, pay-register-qr, pay-register-utr, pay-forge, pay-paradox, pay-detail-mob"
 );
 console.log(
   faults.length ? `FAULTS:\n${faults.join("\n")}` : "no console errors / page errors"

@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
@@ -12,7 +12,7 @@ import tailwindcss from "@tailwindcss/vite";
  * - HSTS is only sent by preview and is honored by browsers only over
  *   HTTPS, so it stays inert on localhost but is ready behind TLS.
  */
-function securityHeadersPlugin() {
+function securityHeadersPlugin(supabaseUrl) {
   // NOTE: must return undefined — a returned Connect app would be mistaken
   // for Vite's "post configureServer" hook and called as a function.
   const apply = (server, { preview }) => {
@@ -23,7 +23,8 @@ function securityHeadersPlugin() {
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
         "img-src 'self' data: blob:",
-        `connect-src 'self'${preview ? "" : " ws: wss:"}`,
+        // Supabase REST — registration writes go to the remote project
+        `connect-src 'self'${supabaseUrl ? ` ${supabaseUrl}` : ""}${preview ? "" : " ws: wss:"}`,
         "worker-src 'self' blob:",
         "object-src 'none'",
         "base-uri 'self'",
@@ -55,23 +56,29 @@ function securityHeadersPlugin() {
   };
 }
 
-export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), securityHeadersPlugin()],
-  // Strip casual console noise from production bundles; warn/error survive.
-  esbuild: mode === "production" ? { pure: ["console.log", "console.debug", "console.info"] } : {},
-  build: {
-    target: "es2020",
-    chunkSizeWarningLimit: 900,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          three: ["three", "@react-three/fiber"],
-          gsap: ["gsap"],
-          motion: ["framer-motion"],
+export default defineConfig(({ mode }) => {
+  // .env is the single source of the Supabase project URL; mirror it into the
+  // CSP so the browser may talk to PostgREST (see also public/_headers).
+  const env = loadEnv(mode, process.cwd(), "");
+  const supabaseUrl = (env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
+  return {
+    plugins: [react(), tailwindcss(), securityHeadersPlugin(supabaseUrl)],
+    // Strip casual console noise from production bundles; warn/error survive.
+    esbuild: mode === "production" ? { pure: ["console.log", "console.debug", "console.info"] } : {},
+    build: {
+      target: "es2020",
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            react: ["react", "react-dom", "react-router-dom"],
+            three: ["three", "@react-three/fiber"],
+            gsap: ["gsap"],
+            motion: ["framer-motion"],
+          },
         },
       },
     },
-  },
-}));
+  };
+});
 

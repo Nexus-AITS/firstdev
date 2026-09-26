@@ -12,6 +12,11 @@ yarn-error.log*
 artifacts/
 *.log
 
+# supabase credentials — never commit
+.env
+.env.*
+!.env.example
+
 # supabase CLI local state (schema SQL files ARE tracked)
 supabase/.temp/
 supabase/.branches/

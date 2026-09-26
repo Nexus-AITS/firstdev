@@ -33,24 +33,28 @@ npm run preview  # preview build
 | `/events/paradox`  | Non-technical realm         |
 | `/events/arena`    | Esports realm               |
 | `/events/:eventId` | Event detail                |
-| `/gateway`         | Registration gateway        |
+| `/register`         | Registration wizard (details → payment QR → UTR) |
+| `/gateway`          | Legacy hand-off → redirects to `/register` |
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
 | `/admin`           | Admin console (unlinked)    |
 
-## Data model (Supabase — staged)
+## Data model (Supabase — connected)
 
 The registration schema — **Name, Roll Number, College name, Year, Department,
 Phone Number, Email, UTR number, Payment status** — lives in
 `supabase/migrations/20260926000000_create_registrations.sql`
 (with fake sample rows in `supabase/seed.sql` and full notes in
-`docs/supabase-data-model.md`). Payments follow a **UTR verification flow**:
-the participant submits a UTR number (`unverified` → "not verified"), then an
-admin confirms it (`verified`); rejected UTRs can be re-submitted. The schema
-is **not wired into the app yet**: no client library, no env keys, and RLS is
-enabled with zero policies so the table is inaccessible over the API until
-integration work begins.
+`docs/supabase-data-model.md`). It is **applied to the live project** via
+`npm run db:migrate` (Management API + `SUPABASE_ACCESS_TOKEN` in `.env`).
+Payments follow a **UTR verification flow**: the participant submits a UTR
+number (`unverified` → "not verified"), then an admin confirms it
+(`verified`); rejected UTRs can be re-submitted. RLS keeps **reads denied**;
+the only API write path is the narrow anon `INSERT` policy in
+`supabase/migrations/20260926000001_registration_policies.sql`, used by the
+`/register` wizard (dual-write: local store first for `/admin`, then
+best-effort sync to Supabase).
 
 ## Admin console (`/admin`)
 
@@ -73,16 +77,18 @@ whose functions map 1:1 to future Supabase calls (swap the internals when
 keys land). **Authentication is a planned follow-up pass** — until it ships,
 treat the `/admin` URL as private.
 
-## Centralized external links
+## Registration flow & external links
 
-All registration/application URLs live in **`src/config/eventLinks.js`**.
-Replace `https://YOUR-REAL-APP-URL...` with the real application — nothing else
-needs to change.
+Every event's "Enter Event" CTA (and every bundle's "Claim" CTA) routes to
+**`/register`** — an in-app wizard: **details → payment QR → UTR reference →
+confirmation**. `/gateway` is kept as a legacy redirect so old links still
+land in the wizard. Payment QR configuration (UPI id, payee) lives in
+**`src/config/payment.js`** — set `PAYMENT_VPA` there and the QR renders from
+the event's fee automatically.
 
-Every event's "Enter Event" CTA first routes to **`/gateway`** (the themed
-registration hand-off page, `src/pages/Gateway.jsx`), whose single "Enter the
-application" button resolves `APPLICATION_BASE_URL` — so the final link can
-also be swapped in that one file.
+Remaining external URLs live in **`src/config/eventLinks.js`** (used by the
+Nexus AI hand-off). Replace `https://YOUR-REAL-APP-URL...` with the real
+application — nothing else needs to change.
 
 Event content lives in **`src/data/events.js`** (add/edit events there).
 
@@ -105,9 +111,10 @@ node verify.mjs   # uses system Chrome (channel: "chrome")
 
 It checks all routes × desktop/mobile viewports for console errors and
 horizontal overflow, the ENTER NEXUS transition (normal + reduced-motion),
-realm-portal navigation, the mobile menu, keyboard focus order, and that
-event CTAs pass through `/gateway`, which resolves the external link via
-`eventLinks.js`.
+realm-portal navigation, the mobile menu, keyboard focus order, that event
+and bundle CTAs route into `/register` (with `/gateway` redirecting there),
+and a full wizard pass — details form → payment QR → UTR submission → success
+screen, including the row landing in the store `/admin` reads.
 
 ---
 

@@ -1,9 +1,16 @@
 # Supabase data model — `registrations`
 
-> **Status: staged, not wired.** These files define the schema only. Nothing in
-> `src/` talks to Supabase, no client library or env keys were added, and no
-> remote project is touched. The model is stored here for a later integration
-> pass.
+> **Status: live — wizard writes flow to Supabase.** The migration, the anon
+> INSERT policy (`20260926000001_registration_policies.sql`) and
+> `supabase/seed.sql` are applied to the remote project (ref
+> `xvteqcvvjlxhwijwxbbq`) via `npm run db:migrate` (Management API +
+> `SUPABASE_ACCESS_TOKEN` from `.env`); idempotent, safe to re-run.
+> `src/lib/supabase.js` exposes `createClient()` + `submitRegistration()`; the
+> `/register` wizard dual-writes (local store first for `/admin`, then the
+> anon insert), and `npm run db:ping` proves connectivity from the anon side.
+> Remaining: authenticated-admin pass (sign-in gate, scoped SELECT policies),
+> then swap the function bodies in `src/data/registrations.js` for
+> `supabase.from("registrations")` queries — the Admin page API stays identical.
 
 ## Files
 
@@ -11,6 +18,9 @@
 | ---------------------------------------------------------- | ----------------------------------------------------------- |
 | `supabase/migrations/20260926000000_create_registrations.sql` | Canonical, idempotent DDL (enum, table, indexes, triggers, RLS)     |
 | `supabase/seed.sql`                                        | Three obviously-fake rows for local experiments             |
+| `src/lib/supabase.js`                                      | Shared Supabase client (Vite env credentials)               |
+| `scripts/supabase-ping.mjs` (`npm run db:ping`)            | Connectivity check: auth health + `registrations` select    |
+| `scripts/apply-migration.mjs` (`npm run db:migrate`)       | Applies migrations + seed via the Management API (PAT)      |
 | `docs/supabase-data-model.md`                              | This document — decisions, extension recipes, wiring checklist |
 
 ## Table `public.registrations`
@@ -72,11 +82,15 @@ only through the SQL editor (or a service role with explicit policies) until
 integration deliberately adds rules — matching the project's deny-by-default
 security stance.
 
-## Applying it later
+## Applying it (done — how to re-run)
 
-1. **Dashboard:** SQL Editor → paste the migration → Run → optionally paste `supabase/seed.sql`.
-2. **CLI:** `npx supabase link --project-ref <ref>` then `npx supabase db push` (the `supabase/` directory already follows CLI layout); run the seed manually or via `supabase db reset`.
-3. **Local:** `npx supabase db start` → `npx supabase db reset` applies migrations + seed.
+1. **Repo (used here):** `npm run db:migrate` — runs every file in
+   `supabase/migrations/` plus `supabase/seed.sql` through the Management API
+   using `SUPABASE_ACCESS_TOKEN` from `.env`. Idempotent; applied 2026-09-26
+   to project `xvteqcvvjlxhwijwxbbq`. Seed shows `rows in public.registrations: 3`.
+2. **Dashboard:** SQL Editor → paste the migration → Run → optionally paste `supabase/seed.sql`.
+3. **CLI:** `npx supabase link --project-ref <ref>` then `npx supabase db push` (the `supabase/` directory already follows CLI layout); run the seed manually or via `supabase db reset`. Note: `db:migrate` does not write the CLI's tracking row, so `db push` will re-run the migration once — harmless because it is idempotent.
+4. **Local:** `npx supabase db start` → `npx supabase db reset` applies migrations + seed.
 
 > **Upgrading an earlier staged copy?** The enum was redesigned for the UTR
 > flow (`pending|paid|failed|refunded` → `awaiting_utr|unverified|verified|rejected`).
@@ -89,16 +103,25 @@ security stance.
 - **Allow 5th year:** `alter table public.registrations drop constraint chk_registrations_year, add constraint chk_registrations_year check (year in ('1st','2nd','3rd','4th','5th'));`
 - **Link to events later:** add `event_id uuid` / `event_slug text` (mirroring `src/data/events.js` ids) and a junction table for team registrations — deferred on purpose for now.
 
-## Future integration checklist (deliberately NOT done)
+## Integration checklist
 
-- [ ] `npm i @supabase/supabase-js`
-- [ ] `.env` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (commit `.env.example` only)
-- [ ] Add the project URL to `connect-src` in the CSP (`vite.config.js` `securityHeadersPlugin` **and** `public/_headers` — keep both in sync)
-- [ ] Registration form on `/gateway` inserting into `public.registrations`
-- [ ] UTR entry step setting `utr_number` + `payment_status = 'unverified'`
+- [x] `npm i @supabase/supabase-js`
+- [x] `.env` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (commit `.env.example` only)
+- [x] Add the project URL to `connect-src` in the CSP (`vite.config.js` `securityHeadersPlugin` **and** `public/_headers` — keep both in sync)
+- [x] Registration wizard on `/register` inserting into `public.registrations`
+      (dual-write: local store first for `/admin`, then best-effort Supabase
+      insert; `/gateway` redirects legacy links into the wizard)
+- [x] UTR entry step (wizard step 3) setting `utr_number` +
+      `payment_status = 'unverified'` — one final insert, not a two-phase update
 - [x] Admin console (`/admin`) — roster, dashboard totals, Confirm/Reject/Remove;
       runs on the local mirror `src/data/registrations.js` (functions map 1:1
-      to Supabase calls) — point it at the API when keys land
-- [ ] RLS policies (participant may insert own row and submit a UTR only while
-      `awaiting_utr`/`rejected`; only the service role/admin can set `verified`)
+      to Supabase calls)
+- [x] RLS **insert** policy for `anon`/`authenticated`
+      (`20260926000001_registration_policies.sql`) — CHECK mirrors the schema
+      invariants (`unverified`+UTR, or `awaiting_utr`+no UTR). Reads stay
+      denied and only admin flows can set `verified` — both still require the
+      authenticated-admin pass below
+- [ ] Authenticated admin pass: sign-in gate for `/admin`, scoped RLS
+      policies (SELECT own row / admin reads all), then point the console at
+      the API instead of the local mirror
 - [ ] Optional payment webhook feeding the same status transitions
