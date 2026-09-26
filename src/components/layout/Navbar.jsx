@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Link, useLocation } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import { getLenis } from "../../lib/lenis";
+import AuthControl from "../auth/AuthControl.jsx";
 import MobileMenu from "./MobileMenu.jsx";
 
 const LINKS = [
@@ -109,27 +110,30 @@ export default function Navbar() {
             ))}
           </ul>
 
-          <button
-            type="button"
-            className="group flex h-11 w-11 flex-col items-center justify-center gap-1.5 md:hidden"
-            aria-label={menuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={menuOpen}
-            aria-controls="nexus-mobile-menu"
-            onClick={() => setMenuOpen((v) => !v)}
-          >
-            <span
-              className={[
-                "h-px w-6 bg-crystal transition-transform duration-300",
-                menuOpen ? "translate-y-[3.5px] rotate-45" : "",
-              ].join(" ")}
-            />
-            <span
-              className={[
-                "h-px w-6 bg-crystal transition-transform duration-300",
-                menuOpen ? "-translate-y-[3.5px] -rotate-45" : "",
-              ].join(" ")}
-            />
-          </button>
+          <div className="flex items-center gap-4 md:gap-6">
+            <AuthControl />
+            <button
+              type="button"
+              className="group flex h-11 w-11 flex-col items-center justify-center gap-1.5 md:hidden"
+              aria-label={menuOpen ? "Close menu" : "Open menu"}
+              aria-expanded={menuOpen}
+              aria-controls="nexus-mobile-menu"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <span
+                className={[
+                  "h-px w-6 bg-crystal transition-transform duration-300",
+                  menuOpen ? "translate-y-[3.5px] rotate-45" : "",
+                ].join(" ")}
+              />
+              <span
+                className={[
+                  "h-px w-6 bg-crystal transition-transform duration-300",
+                  menuOpen ? "-translate-y-[3.5px] -rotate-45" : "",
+                ].join(" ")}
+              />
+            </button>
+          </div>
         </nav>
       </header>
 

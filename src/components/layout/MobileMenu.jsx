@@ -1,9 +1,13 @@
 import { useEffect, useRef } from "react";
 import { NavLink } from "react-router-dom";
 import { motion } from "framer-motion";
+import GoogleSignIn from "../auth/GoogleSignIn.jsx";
+import ProfileChip from "../auth/ProfileChip.jsx";
+import { useAuth } from "../../context/AuthContext";
 
 export default function MobileMenu({ links, onClose }) {
   const firstLinkRef = useRef(null);
+  const { configured, signedIn } = useAuth();
 
   useEffect(() => {
     firstLinkRef.current?.focus();
@@ -68,6 +72,21 @@ export default function MobileMenu({ links, onClose }) {
           </motion.li>
         ))}
       </ul>
+
+      {/* Identity sits inside the menu because the inline navbar control is
+          avatar-only on phones — this is where a phone signs in or out. */}
+      {configured ? (
+        <div className="mt-12 border-t border-white/10 pt-8">
+          {signedIn ? (
+            <ProfileChip variant="stack" />
+          ) : (
+            <>
+              <p className="text-[10px] uppercase tracking-[0.5em] text-lavender/60">Identity</p>
+              <GoogleSignIn className="mt-5" />
+            </>
+          )}
+        </div>
+      ) : null}
 
       <div className="mt-14 space-y-2 text-[10px] uppercase tracking-[0.4em] text-crystal/40">
         <p>Connect • Create • Transcend</p>

@@ -4,10 +4,13 @@ import Reveal from "../components/ui/Reveal.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
+import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
+import ProfileChip from "../components/auth/ProfileChip.jsx";
 import { APPLICATION_BASE_URL } from "../config/eventLinks.js";
 import { getEventById, formatMaxSize } from "../data/events.js";
 import { realms } from "../data/realms.js";
 import { getBundleById, describeInclude } from "../data/bundles.js";
+import { useAuth } from "../context/AuthContext";
 
 /**
  * Registration hand-off — every event's "Enter Event" CTA lands here first.
@@ -38,6 +41,7 @@ export default function Gateway() {
   const event = getEventById(searchParams.get("event"));
   const realm = event ? realms[event.realm] : null;
   const bundle = getBundleById(searchParams.get("bundle"));
+  const { configured, signedIn } = useAuth();
 
   return (
     <Page>
@@ -77,6 +81,39 @@ export default function Gateway() {
             </p>
           </Reveal>
         </section>
+
+        {/* Identity — the gateway is where a name gets attached to a
+            registration, so it is where sign-in belongs. Signing in stays
+            optional: the hand-off below must work for a visitor who does not
+            want an account, and must not break when no provider is wired up. */}
+        {configured ? (
+          <section
+            className="relative z-10 mx-auto mt-12 max-w-[1680px] px-5 text-center md:px-10"
+            aria-label="Identity"
+          >
+            <Reveal delay={0.55}>
+              {signedIn ? (
+                <div className="inline-flex flex-wrap items-center justify-center gap-x-5 gap-y-3 border border-lavender/25 px-5 py-3">
+                  <ProfileChip />
+                  <span aria-hidden className="hidden h-4 w-px bg-lavender/25 md:block" />
+                  <span className="text-[10px] uppercase tracking-[0.32em] text-crystal/50">
+                    Registration travels with this identity
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-5">
+                  <p className="text-[10px] uppercase tracking-[0.4em] text-lavender/70">
+                    Carry your identity across the threshold
+                  </p>
+                  <GoogleSignIn label="Sign in with Google" />
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-crystal/35">
+                    Optional — the application below works without it
+                  </p>
+                </div>
+              )}
+            </Reveal>
+          </section>
+        ) : null}
 
 
         {/* selected event context (from ?event=<id>) */}
