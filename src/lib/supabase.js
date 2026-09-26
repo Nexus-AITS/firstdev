@@ -16,17 +16,18 @@ import { createClient } from "@supabase/supabase-js";
 const url = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!url || !anonKey) {
-  // Fail loudly during development instead of sending undefined headers.
-  throw new Error(
-    "Missing Supabase credentials: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY " +
-      "must be set in .env (see .env.example)."
-  );
-}
+// Degrade instead of throwing: importing this module must never crash a route.
+// Fresh clones, CI and deployments without VITE_SUPABASE_* still get the full
+// wizard — `supabase` is simply null and `submitRegistration` reports
+// { synced: false } so the success screen says "cloud sync unavailable".
+// (Same contract as config/supabase.js and its `isAuthConfigured`.)
+export const isSupabaseConfigured = Boolean(url && anonKey);
 
-export const supabase = createClient(url, anonKey, {
-  auth: { persistSession: false },
-});
+export const supabase = isSupabaseConfigured
+  ? createClient(url, anonKey, {
+      auth: { persistSession: false },
+    })
+  : null;
 
 /**
  * Send a completed /register wizard row to the remote project.
@@ -35,6 +36,12 @@ export const supabase = createClient(url, anonKey, {
  * Returns { synced: true } or { synced: false, error }.
  */
 export async function submitRegistration(row) {
+  if (!supabase) {
+    console.warn(
+      "supabase insert skipped: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY not set in this build"
+    );
+    return { synced: false, error: "Supabase is not configured for this deployment." };
+  }
   try {
     const { error } = await supabase.from("registrations").insert({
       name: row.name,

@@ -5,9 +5,12 @@
 > `supabase/seed.sql` are applied to the remote project (ref
 > `xvteqcvvjlxhwijwxbbq`) via `npm run db:migrate` (Management API +
 > `SUPABASE_ACCESS_TOKEN` from `.env`); idempotent, safe to re-run.
-> `src/lib/supabase.js` exposes `createClient()` + `submitRegistration()`; the
-> `/register` wizard dual-writes (local store first for `/admin`, then the
-> anon insert), and `npm run db:ping` proves connectivity from the anon side.
+> `src/lib/supabase.js` exposes the shared `supabase` client (with
+> `isSupabaseConfigured`) + `submitRegistration()`; builds without
+> `VITE_SUPABASE_*` degrade instead of crashing — the wizard still runs and
+> reports "cloud sync unavailable". The `/register` wizard dual-writes (local
+> store first for `/admin`, then the anon insert), and `npm run db:ping` proves
+> connectivity from the anon side.
 > Remaining: authenticated-admin pass (sign-in gate, scoped SELECT policies),
 > then swap the function bodies in `src/data/registrations.js` for
 > `supabase.from("registrations")` queries — the Admin page API stays identical.
