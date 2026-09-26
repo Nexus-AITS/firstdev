@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import Page from "../components/ui/Page.jsx";
 import Reveal from "../components/ui/Reveal.jsx";
@@ -6,6 +7,7 @@ import ParticleField from "../components/fx/ParticleField.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import ProfileChip from "../components/auth/ProfileChip.jsx";
+import RegistrationForm from "../components/registration/RegistrationForm.jsx";
 import { APPLICATION_BASE_URL } from "../config/eventLinks.js";
 import { getEventById, formatMaxSize } from "../data/events.js";
 import { realms } from "../data/realms.js";
@@ -14,9 +16,14 @@ import { useAuth } from "../context/AuthContext";
 
 /**
  * Registration hand-off — every event's "Enter Event" CTA lands here first.
- * The single external button resolves APPLICATION_BASE_URL from
- * src/config/eventLinks.js, so the real application URL is set in exactly
- * one place. Optional `?event=<id>` context personalises the crossing.
+ *
+ * The crossing has three deliberate steps: the CTA opens a five-field
+ * registration form (name, roll number, college, department, year), the
+ * submitted record is written through src/data/registrations.js so the /admin
+ * console can review it, and only then does the single external link resolve
+ * APPLICATION_BASE_URL from src/config/eventLinks.js — so the real
+ * application URL is still set in exactly one place. Optional `?event=<id>`
+ * and `?bundle=<id>` context personalise the crossing.
  */
 const STEPS = [
   {
@@ -32,7 +39,7 @@ const STEPS = [
   {
     n: "03",
     title: "CLAIM YOUR SEAT",
-    text: "The real Nexus application completes your registration and confirms your place.",
+    text: "Five details — name, roll number, college, department, year — then the hand-off into the real Nexus application.",
   },
 ];
 
@@ -41,7 +48,11 @@ export default function Gateway() {
   const event = getEventById(searchParams.get("event"));
   const realm = event ? realms[event.realm] : null;
   const bundle = getBundleById(searchParams.get("bundle"));
-  const { configured, signedIn } = useAuth();
+  const { configured, signedIn, name: identityName } = useAuth();
+  // Hand-off phases: the CTA opens the registration form, and only a
+  // submitted form reveals the single external link.
+  const [phase, setPhase] = useState("idle");
+  const [record, setRecord] = useState(null);
 
   return (
     <Page>
@@ -225,17 +236,63 @@ export default function Gateway() {
                   ? `Ready to claim your ${bundle.name} ${bundle.price}`
                   : "Registration begins beyond this page"}
             </p>
-            <div className="relative mt-8 inline-block">
-              <div
-                aria-hidden
-                className="absolute inset-[-60%] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.32),transparent_65%)] blur-2xl"
+            {phase === "form" ? (
+              <RegistrationForm
+                contextLabel={event ? event.title : bundle ? `${bundle.name} ${bundle.price}` : ""}
+                defaultName={signedIn ? identityName : ""}
+                onSubmitted={(row) => {
+                  setRecord(row);
+                  setPhase("recorded");
+                }}
               />
-              <CinematicButton href={APPLICATION_BASE_URL} className="relative px-10 py-5 md:px-14">
-                Enter the application
-              </CinematicButton>
-            </div>
+            ) : phase === "recorded" && record ? (
+              <div className="mx-auto mt-9 w-full max-w-xl border border-lavender/25 bg-white/[0.02] p-6 text-left md:p-8">
+                <p className="text-[10px] font-medium uppercase tracking-[0.42em] text-gold/85">
+                  Registration recorded
+                </p>
+                <h2 className="mt-3 font-display text-2xl tracking-[0.1em] text-crystal">
+                  {record.name}
+                </h2>
+                <dl className="mt-5 grid gap-x-6 gap-y-3 text-[11px] sm:grid-cols-2">
+                  {[
+                    ["Roll number", record.roll_number],
+                    ["College", record.college_name],
+                    ["Department", record.department],
+                    ["Year", `${record.year} year`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="border-t border-white/10 pt-3">
+                      <dt className="text-[9px] uppercase tracking-[0.32em] text-crystal/45">{label}</dt>
+                      <dd className="mt-1 text-crystal">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="relative mt-7 inline-block">
+                  <div
+                    aria-hidden
+                    className="absolute inset-[-60%] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.32),transparent_65%)] blur-2xl"
+                  />
+                  <CinematicButton href={APPLICATION_BASE_URL} className="relative px-10 py-5 md:px-14">
+                    Enter the application
+                  </CinematicButton>
+                </div>
+              </div>
+            ) : (
+              <div className="relative mt-8 inline-block">
+                <div
+                  aria-hidden
+                  className="absolute inset-[-60%] rounded-full bg-[radial-gradient(circle,rgba(124,58,237,0.32),transparent_65%)] blur-2xl"
+                />
+                <CinematicButton onClick={() => setPhase("form")} className="relative px-10 py-5 md:px-14">
+                  Continue to application
+                </CinematicButton>
+              </div>
+            )}
             <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-crystal/35">
-              This gateway hands you over to the real Nexus application
+              {phase === "idle"
+                ? "A five-field registration form comes first"
+                : phase === "form"
+                  ? "Name, roll number, college, department, year"
+                  : "The gateway hands you over to the real Nexus application"}
             </p>
           </Reveal>
         </section>

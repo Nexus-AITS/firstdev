@@ -312,6 +312,113 @@ export function getStats(rows = listRegistrations()) {
   return stats;
 }
 
+/* ---------- participant self-registration (the /gateway form) ---------- */
+
+/** Academic years — mirrors chk_registrations_year in the SQL migration. */
+export const YEAR_OPTIONS = ["1st", "2nd", "3rd", "4th"];
+
+/**
+ * Field rules copied from the SQL CHECK constraints, so the browser refuses
+ * exactly what Postgres will refuse once this store is swapped for Supabase.
+ * Returns a { field: message } map — empty when the input is acceptable.
+ */
+export function validateRegistration(input) {
+  const errors = {};
+  const text = (v) => String(v ?? "").trim();
+
+  const name = text(input.name);
+  if (name.length < 2 || name.length > 120) {
+    errors.name = "Enter your full name (2–120 characters).";
+  }
+
+  const roll = text(input.roll_number);
+  if (roll.length < 3 || roll.length > 40) {
+    errors.roll_number = "Enter your roll number (3–40 characters).";
+  }
+
+  const college = text(input.college_name);
+  if (college.length < 2 || college.length > 160) {
+    errors.college_name = "Enter your college name (2–160 characters).";
+  }
+
+  const department = text(input.department);
+  if (department.length < 2 || department.length > 80) {
+    errors.department = "Enter your department (2–80 characters).";
+  }
+
+  if (!YEAR_OPTIONS.includes(text(input.year))) errors.year = "Choose your year of study.";
+
+  return errors;
+}
+
+/** uuid where the browser has it; the schema's pk defaults to gen_random_uuid(). */
+function newId() {
+  try {
+    if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  } catch {
+    /* older browsers — fall through to a local-only id */
+  }
+  return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Add one registration — the participant path, mapped to
+ * `supabase.from("registrations").insert({...})`. Returns `{ ok: true, row }`
+ * or `{ ok: false, errors }` so the form can place each message next to its
+ * field instead of guessing.
+ *
+ * The duplicate rule mirrors the uq_registrations_college_roll index: one
+ * registration per roll number per college, case/whitespace-insensitive.
+ */
+export function createRegistration(input) {
+  const errors = validateRegistration(input);
+  if (Object.keys(errors).length) return { ok: false, errors };
+
+  const clean = (v) => String(v ?? "").trim();
+  const name = clean(input.name);
+  const roll_number = clean(input.roll_number);
+  const college_name = clean(input.college_name);
+  const department = clean(input.department);
+  const year = clean(input.year);
+
+  const rows = listRegistrations();
+  const clash = rows.find(
+    (r) =>
+      clean(r.roll_number).toUpperCase() === roll_number.toUpperCase() &&
+      clean(r.college_name).toUpperCase() === college_name.toUpperCase()
+  );
+  if (clash) {
+    return {
+      ok: false,
+      errors: { roll_number: "That roll number is already registered for this college." },
+    };
+  }
+
+  const row = {
+    id: newId(),
+    name,
+    roll_number,
+    college_name,
+    year,
+    department,
+    // The simple gateway form collects only the five identity fields. The SQL
+    // columns are NOT NULL, so an integration pass must either collect these
+    // or relax the table; empty strings keep the Admin console rendering.
+    phone_number: "",
+    email: "",
+    payment_status: "awaiting_utr",
+    utr_number: null,
+    utr_submitted_at: null,
+    payment_verified_at: null,
+    payment_verified_by: null,
+    created_at: nowISO(),
+    updated_at: nowISO(),
+  };
+
+  persist([row, ...rows]);
+  return { ok: true, row };
+}
+
 /**
  * Admin confirms the UTR → payment_status "verified" with audit stamps.
  * Invariant (same as chk_registrations_utr_state): only rows that actually

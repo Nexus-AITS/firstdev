@@ -152,10 +152,39 @@ for (const vp of VIEWPORTS) {
 
   await page.goto(BASE + "/gateway?event=nexus-breach", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const href = await page.getByRole("link", { name: /enter the application/i }).getAttribute("href");
-  out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
   const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
   out(ctxCard === 1, "gateway event context card", `count=${ctxCard}`);
+
+  /* the CTA opens the registration form — the external link comes only after */
+  await page.getByRole("button", { name: /continue to application/i }).click();
+  await page.waitForTimeout(700);
+  const labels = [/full name/i, /roll number/i, /college name/i, /department/i, /year of study/i];
+  const fields = [];
+  for (const label of labels) fields.push(await page.getByLabel(label).count());
+  out(
+    fields.every((n) => n === 1),
+    "gateway registration form fields",
+    `name=${fields[0]} roll=${fields[1]} college=${fields[2]} dept=${fields[3]} year=${fields[4]}`
+  );
+
+  // an empty submit must be refused field by field, not accepted silently
+  await page.getByRole("button", { name: /submit registration/i }).click();
+  await page.waitForTimeout(400);
+  const alerts = await page.locator('form [role="alert"]').count();
+  out(alerts === 5, "gateway form validation", `alerts=${alerts}`);
+
+  await page.getByLabel(/full name/i).fill("Verify Runner");
+  await page.getByLabel(/roll number/i).fill("VERIFY-0001");
+  await page.getByLabel(/college name/i).fill("AITS Tirupati");
+  await page.getByLabel(/department/i).fill("CSE");
+  await page.getByLabel(/year of study/i).selectOption("3rd");
+  await page.getByRole("button", { name: /submit registration/i }).click();
+  await page.waitForTimeout(700);
+  const recorded = await page.getByRole("heading", { name: "Verify Runner", exact: true }).count();
+  out(recorded === 1, "gateway registration recorded", `heading=${recorded}`);
+
+  const href = await page.getByRole("link", { name: /enter the application/i }).getAttribute("href");
+  out(Boolean(href && href.startsWith("https://YOUR-REAL-APP-URL")), "centralized external CTA", href || "missing");
 
   /* bundle cards all hand off to the gateway, which shows the bundle card */
   await page.goto(BASE + "/bundled", { waitUntil: "domcontentloaded" });

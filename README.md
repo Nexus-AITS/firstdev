@@ -81,9 +81,13 @@ Replace `https://YOUR-REAL-APP-URL...` with the real application — nothing els
 needs to change.
 
 Every event's "Enter Event" CTA first routes to **`/gateway`** (the themed
-registration hand-off page, `src/pages/Gateway.jsx`), whose single "Enter the
-application" button resolves `APPLICATION_BASE_URL` — so the final link can
-also be swapped in that one file.
+registration hand-off page, `src/pages/Gateway.jsx`). "Continue to application"
+opens a five-field registration form — **name, roll number, college name,
+department, year** — whose rules mirror the SQL CHECK constraints and whose
+record lands in the same store the `/admin` console reads
+(`src/data/registrations.js`). Only a submitted form reveals the single external
+button that resolves `APPLICATION_BASE_URL`, so the final link can still be
+swapped in that one file.
 
 Event content lives in **`src/data/events.js`** (add/edit events there).
 
