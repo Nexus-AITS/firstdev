@@ -20,7 +20,7 @@ import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
  * lands: details → payment QR → UTR reference → confirmation.
  *
  * Replaces the old /gateway hand-off: /gateway redirects here so old links
- * keep working. Persistence is dual-write — local store first (what /admin
+ * keep working. Persistence is dual-write — local store first (what the admin console
  * reads), then best-effort into Supabase public.registrations (anon INSERT
  * policy: supabase/migrations/20260926000001_registration_policies.sql).
  */
@@ -51,6 +51,13 @@ export default function Register() {
   const paid = fee != null;
   const contextTitle = event ? event.title : bundle ? bundle.name : null;
   const returnTo = event ? `/events/${event.id}` : bundle ? "/bundled" : "/events";
+  // What the participant is buying — recorded on the row (purchase_type +
+  // purchase_label) so the admin panel can show which event / which bundle.
+  const purchase = event
+    ? { type: "event", label: event.title }
+    : bundle
+      ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${bundle.price}` }
+      : null;
 
   const [step, setStep] = useState("details"); // details | pay | utr | done
   const [form, setForm] = useState(emptyForm);
@@ -83,7 +90,12 @@ export default function Register() {
   }
 
   async function finalize(utrValue) {
-    const result = addRegistration({ ...form, utr_number: utrValue });
+    const result = addRegistration({
+      ...form,
+      utr_number: utrValue,
+      purchase_type: purchase?.type ?? null,
+      purchase_label: purchase?.label ?? null,
+    });
     if (result.error) {
       setError(result.error);
       setStep(utrValue != null ? "utr" : "details");

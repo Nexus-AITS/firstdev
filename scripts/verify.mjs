@@ -20,7 +20,8 @@ const ROUTES = [
   ["/register", "EVENT REGISTER"],
   ["/gateway", "EVENT REGISTER"], // legacy hand-off redirects into /register
   ["/bundled", "BUNDLED"],
-  ["/admin", "ADMIN CONSOLE"],
+  ["/admin123456789", "ADMIN CONSOLE"],
+  ["/admin", "REALM NOT FOUND"], // old console URL must stay dead
   ["/definitely-missing", "REALM NOT FOUND"],
 ];
 
@@ -307,7 +308,7 @@ for (const vp of VIEWPORTS) {
     .catch(() => false);
   out(success, "wizard success screen");
 
-  // the row must land in the store /admin reads, unverified with the UTR
+  // the row must land in the store the admin console reads, unverified with the UTR
   const stored = await page.evaluate(() => {
     try {
       const rows = JSON.parse(localStorage.getItem("nexus.registrations.v1") || "[]");
@@ -317,9 +318,17 @@ for (const vp of VIEWPORTS) {
     }
   });
   out(
-    Boolean(stored && stored.payment_status === "unverified" && stored.utr_number === "998877665511"),
-    "wizard persists to admin store (unverified + UTR)",
-    stored ? `status=${stored.payment_status} utr=${stored.utr_number}` : "row missing"
+    Boolean(
+      stored &&
+        stored.payment_status === "unverified" &&
+        stored.utr_number === "998877665511" &&
+        stored.purchase_type === "event" &&
+        stored.purchase_label
+    ),
+    "wizard persists to admin store (unverified + UTR + purchase)",
+    stored
+      ? `status=${stored.payment_status} utr=${stored.utr_number} purchase=${stored.purchase_type}/${stored.purchase_label}`
+      : "row missing"
   );
   out(errs.length === 0, "wizard console errors", errs[0] || "none");
   await ctx.close();
@@ -334,7 +343,7 @@ for (const vp of VIEWPORTS) {
   page.on("console", (m) => {
     if (m.type() === "error" && !benign(m.text())) errs.push(m.text());
   });
-  await page.goto(BASE + "/admin", { waitUntil: "domcontentloaded" });
+  await page.goto(BASE + "/admin123456789", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
 
   const num = async (sel) => Number((await page.locator(sel).innerText()).trim());
@@ -346,6 +355,17 @@ for (const vp of VIEWPORTS) {
     "admin dashboard stats + auth note",
     `participants=${total0} colleges=${colleges} note=${note}`
   );
+
+  // purchase context: every roster row says which event / which bundle it bought
+  const ev = await num("#stat-events");
+  const bd = await num("#stat-bundles");
+  out(
+    ev > 0 && bd > 0 && ev + bd === total0,
+    "admin purchase breakdown (event vs bundle)",
+    `events=${ev} bundles=${bd} total=${total0}`
+  );
+  const purchaseHeader = await page.getByRole("columnheader", { name: "Purchase" }).count();
+  out(purchaseHeader === 1, "admin roster has a Purchase column", `count=${purchaseHeader}`);
 
   // sorting beside the search bar — name A–Z must put the alphabetically
   // first roster name on top, and the control must reset cleanly

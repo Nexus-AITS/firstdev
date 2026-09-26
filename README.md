@@ -39,7 +39,7 @@ npm run preview  # preview build
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
-| `/admin`           | Admin console (unlinked)    |
+| `/admin123456789`           | Admin console (unlinked)    |
 
 ## Data model (Supabase — connected)
 
@@ -54,19 +54,20 @@ number (`unverified` → "not verified"), then an admin confirms it
 (`verified`); rejected UTRs can be re-submitted. RLS keeps **reads denied**;
 the only API write path is the narrow anon `INSERT` policy in
 `supabase/migrations/20260926000001_registration_policies.sql`, used by the
-`/register` wizard (dual-write: local store first for `/admin`, then
+`/register` wizard (dual-write: local store first for `/admin123456789`, then
 best-effort sync to Supabase).
 
-## Admin console (`/admin`)
+## Admin console (`/admin123456789`)
 
-An operations console at **`/admin`** — deliberately **not linked from the
+An operations console at **`/admin123456789`** — deliberately **not linked from the
 navbar or footer**; open the URL directly. It provides:
 
 - a **clear dashboard** — total participants, distinct colleges that
-  participated, and payment-state counts (verified / to review / awaiting
-  UTR / rejected);
+  participated, payment-state counts (verified / to review / awaiting
+  UTR / rejected) and **event vs bundle entry counts**;
 - **all participant details** in one table — user id, name, contact, roll
-  number, college, year · department, **UTR**, submission date and status,
+  number, college, year · department, **purchase** (which event entry or
+  which bundle), **UTR**, submission date and status,
   with search, status filters and a **sort select beside the search**
   (newest / oldest, name A–Z, college, status — action first);
 - row actions — **Confirm** (admin confirms the UTR → status flips to
@@ -76,7 +77,7 @@ navbar or footer**; open the URL directly. It provides:
 It runs on `src/data/registrations.js`, a local mirror of the Supabase schema
 whose functions map 1:1 to future Supabase calls (swap the internals when
 keys land). **Authentication is a planned follow-up pass** — until it ships,
-treat the `/admin` URL as private.
+treat the `/admin123456789` URL as private.
 
 ## Registration flow & external links
 
@@ -168,7 +169,7 @@ horizontal overflow, the ENTER NEXUS transition (normal + reduced-motion),
 realm-portal navigation, the mobile menu, keyboard focus order, that event
 and bundle CTAs route into `/register` (with `/gateway` redirecting there),
 and a full wizard pass — details form → payment QR → UTR submission → success
-screen, including the row landing in the store `/admin` reads.
+screen, including the row landing in the store `/admin123456789` reads.
 
 ---
 

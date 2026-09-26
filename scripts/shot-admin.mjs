@@ -15,7 +15,7 @@ page.on("console", (m) => {
 });
 page.on("pageerror", (e) => faults.push(`pageerror: ${e.message}`));
 
-await page.goto("http://localhost:4173/admin", { waitUntil: "networkidle" });
+await page.goto("http://localhost:4173/admin123456789", { waitUntil: "networkidle" });
 await page.waitForTimeout(2500);
 await page.screenshot({ path: "artifacts/screenshots/admin-hero.png" });
 
@@ -30,7 +30,7 @@ await page.close();
 
 const mob = await browser.newPage({ viewport: { width: 390, height: 844 } });
 mob.on("pageerror", (e) => faults.push(`mobile pageerror: ${e.message}`));
-await mob.goto("http://localhost:4173/admin", { waitUntil: "networkidle" });
+await mob.goto("http://localhost:4173/admin123456789", { waitUntil: "networkidle" });
 await mob.waitForTimeout(2500);
 await mob.screenshot({ path: "artifacts/screenshots/admin-mob.png" });
 await mob.close();

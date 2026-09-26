@@ -262,6 +262,31 @@ const SEED = [
     updated_at: "2026-09-21T08:15:00.000Z",
   },
 ];
+/* Demo purchase context for the seed roster — mirrors what the /register
+ * wizard records from ?event= / ?bundle= so the admin panel shows a live
+ * mix of event entries and bundles out of the box. */
+[
+  ["event", "NEXUS BREACH"],
+  ["event", "VISION 2065"],
+  ["bundle", "BUNDLED #01 · ₹299"],
+  ["event", "THE SCIENTIST FILES"],
+  ["event", "MATRIX"],
+  ["bundle", "NEXUS REBUILDERS BUNDLED #04 · ₹399"],
+  ["event", "FREE FIRE"],
+  ["event", "CIRCUITS OF NEXUS"],
+  ["bundle", "BUNDLED #02 · ₹349"],
+  ["event", "PIXEL RESISTANCE"],
+  ["bundle", "NEXUS OFF-GRID BUNDLED #08 · ₹349"],
+  ["event", "AI TURING GAMBIT"],
+  ["bundle", "BUNDLED #05 · ₹399"],
+  ["event", "SHUTTER QUEST"],
+].forEach(([type, label], i) => {
+  if (SEED[i]) {
+    SEED[i].purchase_type = type;
+    SEED[i].purchase_label = label;
+  }
+});
+
 /* ---------- persistence (localStorage today, Supabase tomorrow) ---------- */
 
 function persist(rows) {
@@ -300,9 +325,13 @@ export function getStats(rows = listRegistrations()) {
     unverified: 0,
     awaiting: 0,
     rejected: 0,
+    events: 0,
+    bundles: 0,
   };
   for (const r of rows) {
     colleges.add(String(r.college_name || "").trim().toLowerCase());
+    if (r.purchase_type === "event") stats.events += 1;
+    else if (r.purchase_type === "bundle") stats.bundles += 1;
     if (r.payment_status === "verified") stats.verified += 1;
     else if (r.payment_status === "unverified") stats.unverified += 1;
     else if (r.payment_status === "rejected") stats.rejected += 1;
@@ -427,6 +456,8 @@ export function addRegistration(input) {
     utr_submitted_at: hasUtr ? ts : null,
     payment_verified_at: null,
     payment_verified_by: null,
+    purchase_type: input.purchase_type ?? null,
+    purchase_label: input.purchase_label ?? null,
     created_at: ts,
     updated_at: ts,
   };

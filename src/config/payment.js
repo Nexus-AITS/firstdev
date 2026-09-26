@@ -8,11 +8,11 @@
  * "pending setup" panel instead of a dead QR.
  */
 
-/** Organizer UPI id, e.g. "nexusevents@upi". Empty = not configured yet. */
-export const PAYMENT_VPA = "";
+/** Organizer UPI id from the printed Axis Bank QR (AITS principal account). */
+export const PAYMENT_VPA = "Mswipe.1420071125000600@axisbank";
 
-/** Payee display name shown in UPI apps. */
-export const PAYEE_NAME = "NEXUS Events";
+/** Payee display name shown in UPI apps (as printed under the QR). */
+export const PAYEE_NAME = "The Principal, AITS Venkatapuram Tirupati";
 
 /** Build the UPI deep link the QR encodes. */
 export function buildUpiUrl({ amount, note }) {

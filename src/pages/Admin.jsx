@@ -12,7 +12,7 @@ import {
 } from "../data/registrations.js";
 
 /**
- * ADMIN CONSOLE — /admin
+ * ADMIN CONSOLE — /admin123456789
  *
  * Participant roster + payment verification desk:
  *  • dashboard totals (participants, distinct colleges, payment states)
@@ -85,7 +85,7 @@ export default function Admin() {
     const matched = rows.filter((r) => {
       if (filter !== "all" && r.payment_status !== filter) return false;
       if (!q) return true;
-      return [r.name, r.roll_number, r.college_name, r.email, r.utr_number, r.id]
+      return [r.name, r.roll_number, r.college_name, r.email, r.utr_number, r.id, r.purchase_label, r.purchase_type]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(q));
     });
@@ -140,6 +140,8 @@ export default function Admin() {
   const statCards = [
     { id: "stat-participants", label: "Participants", value: stats.total, tone: "text-crystal" },
     { id: "stat-colleges", label: "Colleges", value: stats.colleges, tone: "text-crystal" },
+    { id: "stat-events", label: "Event entries", value: stats.events, tone: "text-lavender" },
+    { id: "stat-bundles", label: "Bundle entries", value: stats.bundles, tone: "text-gold" },
     { id: "stat-verified", label: "Payment verified", value: stats.verified, tone: "text-gold" },
     { id: "stat-review", label: "To review (UTR)", value: stats.unverified, tone: "text-lavender" },
     { id: "stat-awaiting", label: "Awaiting UTR", value: stats.awaiting, tone: "text-crystal/70" },
@@ -174,7 +176,7 @@ export default function Admin() {
               className="mx-auto mt-8 max-w-3xl border border-gold/30 bg-gold/[0.04] px-5 py-4 text-left text-[11px] leading-relaxed tracking-wide text-gold/85"
             >
               <span className="font-medium uppercase tracking-[0.3em]">Auth: not enabled</span> —
-              this console is open to anyone with the link. A future pass will gate /admin behind
+              this console is open to anyone with the link. A future pass will gate /admin123456789 behind
               an admin login; until then treat the URL as private. Data comes from the local staged
               store that mirrors the Supabase schema (src/data/registrations.js).
             </p>
@@ -186,7 +188,7 @@ export default function Admin() {
           className="relative z-10 mx-auto mt-12 max-w-[1680px] px-5 md:mt-16 md:px-10"
           aria-label="Dashboard totals"
         >
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             {statCards.map((card, i) => (
               <Reveal key={card.id} delay={0.05 * i}>
                 <div className="glass-panel h-full p-4 md:p-5">
@@ -283,13 +285,14 @@ export default function Admin() {
           </p>
           <div id="admin-table-wrap" className="mt-6 overflow-x-auto border border-white/10">
             <table
-              className="w-full min-w-[1120px] border-collapse text-left"
+              className="w-full min-w-[1300px] border-collapse text-left"
               aria-label="All participants"
             >
               <thead>
                 <tr className="border-b border-white/10 bg-white/[0.03] text-[9px] uppercase tracking-[0.28em] text-lavender/70">
                   <th scope="col" className="px-4 py-3 font-medium">User ID</th>
                   <th scope="col" className="px-4 py-3 font-medium">Participant</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Purchase</th>
                   <th scope="col" className="px-4 py-3 font-medium">College</th>
                   <th scope="col" className="px-4 py-3 font-medium">Year · Dept</th>
                   <th scope="col" className="px-4 py-3 font-medium">UTR</th>
@@ -317,6 +320,28 @@ export default function Admin() {
                         <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-lavender/50">
                           {r.roll_number}
                         </p>
+                      </td>
+                      <td className="px-4 py-4">
+                        <span
+                          className={`inline-block border px-2.5 py-1 text-[9px] font-medium uppercase tracking-[0.22em] ${
+                            r.purchase_type === "event"
+                              ? "border-lavender/50 text-lavender bg-violet-core/15"
+                              : r.purchase_type === "bundle"
+                                ? "border-gold/45 text-gold bg-gold/5"
+                                : "border-white/15 text-crystal/45 bg-white/[0.03]"
+                          }`}
+                        >
+                          {r.purchase_type === "event"
+                            ? "Event"
+                            : r.purchase_type === "bundle"
+                              ? "Bundle"
+                              : "—"}
+                        </span>
+                        {r.purchase_label ? (
+                          <p className="mt-1.5 text-[11px] leading-snug text-crystal/60">
+                            {r.purchase_label}
+                          </p>
+                        ) : null}
                       </td>
                       <td className="px-4 py-4 text-xs text-crystal/70">{r.college_name}</td>
                       <td className="px-4 py-4 text-xs text-crystal/70">

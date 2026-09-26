@@ -53,6 +53,8 @@ export async function submitRegistration(row) {
       email: row.email,
       payment_status: row.payment_status,
       utr_number: row.utr_number,
+      purchase_type: row.purchase_type ?? null,
+      purchase_label: row.purchase_label ?? null,
     });
     if (error) {
       console.warn("supabase insert rejected:", error.message, error.code);

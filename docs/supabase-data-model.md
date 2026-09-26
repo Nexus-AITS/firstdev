@@ -9,7 +9,7 @@
 > `isSupabaseConfigured`) + `submitRegistration()`; builds without
 > `VITE_SUPABASE_*` degrade instead of crashing — the wizard still runs and
 > reports "cloud sync unavailable". The `/register` wizard dual-writes (local
-> store first for `/admin`, then the anon insert), and `npm run db:ping` proves
+> store first for `/admin123456789`, then the anon insert), and `npm run db:ping` proves
 > connectivity from the anon side.
 > Remaining: authenticated-admin pass (sign-in gate, scoped SELECT policies),
 > then swap the function bodies in `src/data/registrations.js` for
@@ -20,6 +20,7 @@
 | File                                                       | Purpose                                                     |
 | ---------------------------------------------------------- | ----------------------------------------------------------- |
 | `supabase/migrations/20260926000000_create_registrations.sql` | Canonical, idempotent DDL (enum, table, indexes, triggers, RLS)     |
+| `supabase/migrations/20260926000002_registration_purchase_context.sql` | `purchase_type` / `purchase_label` — which event / which bundle |
 | `supabase/seed.sql`                                        | Three obviously-fake rows for local experiments             |
 | `src/lib/supabase.js`                                      | Shared Supabase client (Vite env credentials)               |
 | `scripts/supabase-ping.mjs` (`npm run db:ping`)            | Connectivity check: auth health + `registrations` select    |
@@ -43,6 +44,8 @@
 | `utr_submitted_at` | timestamptz           | yes  | —                  | auto-stamped on submit / re-submit (trigger)                          |
 | `payment_verified_at` | timestamptz        | yes  | —                  | auto-stamped when admin verifies; cleared if status leaves `verified` |
 | `payment_verified_by` | text               | yes  | —                  | admin identity that confirmed the UTR                                |
+| `purchase_type`  | text                    | yes  | —                  | `event` \| `bundle` (check constraint); what the participant bought   |
+| `purchase_label` | text                    | yes  | —                  | display label: event title, or bundle name + number + price          |
 | `created_at`    | timestamptz             | no   | `now()`            | insert time                                                          |
 | `updated_at`    | timestamptz             | no   | `now()`            | refreshed by trigger on every UPDATE                                 |
 
@@ -104,6 +107,9 @@ security stance.
 
 - **New payment status:** run as its own statement — `alter type public.payment_status add value 'disputed';` (and extend the enum list in the migration for fresh environments).
 - **Allow 5th year:** `alter table public.registrations drop constraint chk_registrations_year, add constraint chk_registrations_year check (year in ('1st','2nd','3rd','4th','5th'));`
+- **Purchase context (done):** `purchase_type` / `purchase_label` landed via
+  `20260926000002_registration_purchase_context.sql` — a display-level record of
+  which event / which bundle each row bought (what the admin panel shows).
 - **Link to events later:** add `event_id uuid` / `event_slug text` (mirroring `src/data/events.js` ids) and a junction table for team registrations — deferred on purpose for now.
 
 ## Integration checklist
@@ -112,19 +118,22 @@ security stance.
 - [x] `.env` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (commit `.env.example` only)
 - [x] Add the project URL to `connect-src` in the CSP (`vite.config.js` `securityHeadersPlugin` **and** `public/_headers` — keep both in sync)
 - [x] Registration wizard on `/register` inserting into `public.registrations`
-      (dual-write: local store first for `/admin`, then best-effort Supabase
+      (dual-write: local store first for `/admin123456789`, then best-effort Supabase
       insert; `/gateway` redirects legacy links into the wizard)
 - [x] UTR entry step (wizard step 3) setting `utr_number` +
       `payment_status = 'unverified'` — one final insert, not a two-phase update
-- [x] Admin console (`/admin`) — roster, dashboard totals, Confirm/Reject/Remove;
+- [x] Admin console (`/admin123456789`) — roster, dashboard totals, Confirm/Reject/Remove;
       runs on the local mirror `src/data/registrations.js` (functions map 1:1
       to Supabase calls)
+- [x] Purchase context — `purchase_type`/`purchase_label` (migration
+      `20260926000002`) captured by the wizard from `?event=`/`?bundle=` and
+      shown in the admin roster (Purchase column) + event/bundle dashboard counts
 - [x] RLS **insert** policy for `anon`/`authenticated`
       (`20260926000001_registration_policies.sql`) — CHECK mirrors the schema
       invariants (`unverified`+UTR, or `awaiting_utr`+no UTR). Reads stay
       denied and only admin flows can set `verified` — both still require the
       authenticated-admin pass below
-- [ ] Authenticated admin pass: sign-in gate for `/admin`, scoped RLS
+- [ ] Authenticated admin pass: sign-in gate for `/admin123456789`, scoped RLS
       policies (SELECT own row / admin reads all), then point the console at
       the API instead of the local mirror
 - [ ] Optional payment webhook feeding the same status transitions

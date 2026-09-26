@@ -68,7 +68,7 @@ export default function App() {
               <Route path="/events/arena" element={<Arena />} />
               <Route path="/events/:eventId" element={<EventDetail />} />
               <Route path="/bundled" element={<Bundled />} />
-              <Route path="/admin" element={<Admin />} />
+              <Route path="/admin123456789" element={<Admin />} />
               <Route path="/gateway" element={<Gateway />} />
               <Route path="/register" element={<Register />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
