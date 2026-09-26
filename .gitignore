@@ -15,12 +15,10 @@ yarn-error.log*
 .env.*
 !.env.example
 
-# supabase credentials — never commit
-.env
-.env.*
-!.env.example
-
 # supabase CLI local state (schema SQL files ARE tracked)
 supabase/.temp/
 supabase/.branches/
+
+# local verification artifacts (screenshots, logs)
+artifacts/
 

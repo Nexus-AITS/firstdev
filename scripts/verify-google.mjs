@@ -68,7 +68,16 @@ const browser = await chromium.launch({ channel: "chrome" });
       await control.click({ timeout: 15000 });
     } catch {
       how = "dom click (pointer click timed out)";
-      await control.evaluate((el) => el.click());
+      // The throw is an actionability timeout, not necessarily a missed hit —
+      // the click may already have fired and the page could be mid-navigation
+      // to Google, where the header locator no longer resolves. Only re-click
+      // while still on-site, and swallow a re-click that races the redirect.
+      try {
+        const left = /accounts\.google\.com|\/auth\/v1\/authorize/.test(page.url());
+        if (!left) await control.evaluate((el) => el.click(), null, { timeout: 5000 });
+      } catch {
+        /* navigation already in flight — waitForURL below does the asserting */
+      }
     }
     await page
       .waitForURL(/accounts\.google\.com|\/auth\/v1\/authorize/, { timeout: 30000 })
