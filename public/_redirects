@@ -5,3 +5,7 @@
 /auth/*      /index.html   200
 /ai          /index.html   200
 /about       /index.html   200
+# catch-all: every other SPA route (notably /register and /admin123456789)
+# must survive a cold load / hard refresh. First match wins — keep this LAST.
+# Mirrors the vercel.json rewrite; checked by `npm run verify:deploy`.
+/*    /index.html   200

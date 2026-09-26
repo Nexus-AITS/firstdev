@@ -14,6 +14,7 @@
     "db:ping": "node scripts/supabase-ping.mjs",
     "db:migrate": "node scripts/apply-migration.mjs",
     "verify:google": "node scripts/verify-google.mjs",
+    "verify:deploy": "node scripts/verify-deploy.mjs",
     "stress": "node scripts/stress-scroll.mjs",
     "shot": "node scripts/shot.mjs",
     "shot:bundled": "node scripts/shot-bundled.mjs",
@@ -24,7 +25,8 @@
     "shot:return": "node scripts/shot-return.mjs",
     "shot:sigil": "node scripts/shot-sigil.mjs",
     "shot:type": "node scripts/shot-type.mjs",
-    "perf": "node scripts/perf.mjs"
+    "perf": "node scripts/perf.mjs",
+    "test": "node scripts/verify-deploy.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.1.0",

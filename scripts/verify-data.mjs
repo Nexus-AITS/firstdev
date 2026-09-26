@@ -3,7 +3,9 @@ mkdirSync("artifacts/screenshots", { recursive: true });
 /** Assert real event data from nexus 65.docx renders on every detail page. */
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:4173";
+// Overridable: vite preview silently falls back to another port when 4173 is
+// taken, and asserting data against the wrong build proves nothing.
+const BASE = process.env.VERIFY_BASE || "http://localhost:4173";
 const CHECKS = [
   ["/events/nexus-breach", ["OCT 5 — 6, 2026", "LABS A–E", "RJ45", "valedictory"]],
   ["/events/vision-2065", ["OCT 5, 2026", "CLASS ROOMS", "Advance registration"]],

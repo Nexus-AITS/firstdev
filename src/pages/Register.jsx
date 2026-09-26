@@ -48,7 +48,10 @@ export default function Register() {
   const bundle = getBundleById(searchParams.get("bundle"));
 
   const fee = event ? (event.payment ?? null) : bundle ? bundle.price : null;
-  const paid = fee != null;
+  // payment: 0 is an explicit FREE entry (events.js requires the field), so only
+  // a positive amount may route through the QR + UTR steps. Number() covers
+  // bundle prices, which are strings ("299").
+  const paid = fee != null && Number(fee) > 0;
   const contextTitle = event ? event.title : bundle ? bundle.name : null;
   const returnTo = event ? `/events/${event.id}` : bundle ? "/bundled" : "/events";
   // What the participant is buying — recorded on the row (purchase_type +
@@ -151,7 +154,9 @@ export default function Register() {
           <Reveal delay={0.46}>
             <p className="mx-auto mt-5 max-w-xl text-sm leading-relaxed tracking-wide text-crystal/60">
               {contextTitle
-                ? "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
+                ? paid
+                  ? "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
+                  : "Submit your details — this entry is free, no payment needed. The admin confirms and your seat is locked."
                 : "Pick an event in the realms to register with its fee, or fill your details below to join the roster."}
               {event?.teamSize
                 ? ` Team event (${event.teamSize}) — each member registers separately.`

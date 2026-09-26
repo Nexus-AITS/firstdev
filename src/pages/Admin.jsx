@@ -176,9 +176,9 @@ export default function Admin() {
               className="mx-auto mt-8 max-w-3xl border border-gold/30 bg-gold/[0.04] px-5 py-4 text-left text-[11px] leading-relaxed tracking-wide text-gold/85"
             >
               <span className="font-medium uppercase tracking-[0.3em]">Auth: not enabled</span> —
-              this console is open to anyone with the link. A future pass will gate /admin123456789 behind
-              an admin login; until then treat the URL as private. Data comes from the local staged
-              store that mirrors the Supabase schema (src/data/registrations.js).
+              this console is open to anyone with the link. A future pass will gate
+              /admin123456789 behind an admin login; until then treat the URL as
+              private.
             </p>
           </Reveal>
         </section>
@@ -211,6 +211,16 @@ export default function Admin() {
           className="relative z-10 mx-auto mt-10 max-w-[1680px] px-5 pb-36 md:px-10"
           aria-label="Participants"
         >
+          {/* Sample-data warning — these rows are a local mirror, not live data. */}
+          <p
+            id="admin-demo-note"
+            className="mb-6 border border-lavender/35 bg-violet-core/[0.08] px-5 py-4 text-[11px] leading-relaxed tracking-wide text-lavender/90"
+          >
+            <span className="font-medium uppercase tracking-[0.3em]">Sample data</span> —
+            the roster below is a built-in demo mirror of the Supabase schema
+            (src/data/registrations.js), not live registrations. Real rows replace it
+            when the authenticated-admin pass lands.
+          </p>
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
               <div className="w-full sm:flex-1 md:max-w-sm">

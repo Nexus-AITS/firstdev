@@ -156,12 +156,12 @@ missing from the Supabase allow list.
 
 ## Verification
 
-An automated Playwright suite lives at `verify.mjs`:
+An automated Playwright suite lives at `scripts/verify.mjs`:
 
 ```bash
 npm run build
-npm run preview   # keep running on :4173
-node verify.mjs   # uses system Chrome (channel: "chrome")
+npm run preview     # keep running on :4173
+npm run verify      # node scripts/verify.mjs (system Chrome, channel: "chrome")
 ```
 
 It checks all routes × desktop/mobile viewports for console errors and
@@ -175,8 +175,8 @@ screen, including the row landing in the store `/admin123456789` reads.
 
 ## Performance & security (built in)
 
-- **Route-level code splitting** — every page except the landing hero is a
-  `React.lazy` chunk, so the entry bundle no longer carries all ten pages.
+- **Route-level code splitting** — every route except the landing hero is a
+  `React.lazy` chunk, so the entry bundle carries only 1 of the 14 page files.
 - **WebGL off the critical path** — three.js (the largest dependency) loads
   behind `LazyCrystalCanvas` / `LazyRealmStage` with on-brand CSS fallbacks
   (nebula backdrop / faceted silhouette); first paint never waits for it.

@@ -1,10 +1,15 @@
 /**
  * NEXUS runtime verification.
- * Run: node verify.mjs   (requires `npm run preview` on :4173 + chromium)
+ * Run: node scripts/verify.mjs   (requires `npm run preview` + Chrome)
+ *
+ * BASE defaults to :4173 but is overridable: vite preview silently falls back
+ * to :4174/4175 when 4173 is already taken (another checkout's preview server,
+ * for example), and assertions against the wrong build are worse than none.
+ *   VERIFY_BASE=http://localhost:4175 npm run verify
  */
 import { chromium } from "playwright";
 
-const BASE = "http://localhost:4173";
+const BASE = process.env.VERIFY_BASE || "http://localhost:4173";
 
 const ROUTES = [
   ["/", "NEXUS"],
@@ -199,6 +204,32 @@ for (const vp of VIEWPORTS) {
   await page.waitForTimeout(900);
   const soloPrice = await page.getByText("₹149 · INDIVIDUAL").count();
   out(soloPrice >= 4, "paradox list shows individual pricing", `count=${soloPrice}`);
+
+  /* payment: 0 — a free entry must read FREE, never render a stray ₹0 */
+  await page.goto(BASE + "/events/free-fire", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const freeCell = await page.getByText("FREE", { exact: true }).count();
+  const freeRupee = await page.getByText("₹0", { exact: true }).count();
+  out(
+    freeCell >= 1 && freeRupee === 0,
+    "free event renders FREE (no stray ₹0)",
+    `free=${freeCell} rupeeZero=${freeRupee}`
+  );
+
+  // …and its wizard must offer two steps only: no fee strip, no QR/UTR copy.
+  await page.goto(BASE + "/register?event=free-fire", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  const freeDetails = await page.locator("#reg-step-details").isVisible().catch(() => false);
+  const freeSteps = await page
+    .locator('ol[aria-label="Registration progress"] li')
+    .count();
+  const feeStrip = await page.getByText("entry fee", { exact: true }).count();
+  const qrCopy = await page.getByText("pay with the QR below").count();
+  out(
+    freeDetails && freeSteps === 2 && feeStrip === 0 && qrCopy === 0,
+    "free event wizard skips payment (2 steps, no QR/UTR)",
+    `details=${freeDetails} steps=${freeSteps} feeStrip=${feeStrip} qrCopy=${qrCopy}`
+  );
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(600);

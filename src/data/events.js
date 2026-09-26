@@ -3,7 +3,10 @@
  * Add / edit events here; components never hardcode content.
  *
  * linkKey maps to src/config/eventLinks.js
- * payment = entry fee in ₹, maxSize = team cap ("individual" = solo entry).
+ * payment = entry fee in ₹ — 0 means an explicitly FREE entry. Never omit the
+ * field: consumers guard on `event.payment != null`, so a missing value reads
+ * as "fee unknown" and hides the price line instead of saying FREE.
+ * maxSize = team cap ("individual" = solo entry).
  */
 export const events = [
   /* ------------------------- NEXUS REBUILDERS ------------------------- */
@@ -235,6 +238,8 @@ export const events = [
     date: "OCT 5 — 6, 2026 · AFTER COLLEGE HOURS",
     venue: "THE ARENA — MAIN STAGE",
     teamSize: "SQUAD OF 4",
+    payment: 0,
+    maxSize: 4,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "squad",
@@ -255,6 +260,19 @@ export function formatMaxSize(maxSize) {
   if (maxSize === "individual") return "INDIVIDUAL";
   if (typeof maxSize === "number") return `MAX SIZE ${maxSize}`;
   return "";
+}
+
+/**
+ * Human label for an entry fee — the single place that decides what a fee
+ * renders as, so a free event can never print "₹0" and a missing fee can never
+ * masquerade as free:
+ *   349 -> "₹349"  charged
+ *   0   -> "FREE"  explicitly free (events.js requires `payment`, 0 = free)
+ *   null -> "—"    data gap — not the same thing as free
+ */
+export function formatFee(payment) {
+  if (payment == null || payment === "") return "—";
+  return Number(payment) > 0 ? `₹${payment}` : "FREE";
 }
 
 export default events;

@@ -98,10 +98,10 @@ security stance.
 3. **CLI:** `npx supabase link --project-ref <ref>` then `npx supabase db push` (the `supabase/` directory already follows CLI layout); run the seed manually or via `supabase db reset`. Note: `db:migrate` does not write the CLI's tracking row, so `db push` will re-run the migration once — harmless because it is idempotent.
 4. **Local:** `npx supabase db start` → `npx supabase db reset` applies migrations + seed.
 
-> **Upgrading an earlier staged copy?** The enum was redesigned for the UTR
-> flow (`pending|paid|failed|refunded` → `awaiting_utr|unverified|verified|rejected`).
-> Since this schema has never been applied to a live project, simply drop and
-> re-run: `drop table public.registrations; drop type public.payment_status;`
+> **Never drop the table to "upgrade".** This schema is applied to the live
+> project — evolving it means adding a new idempotent file under
+> `supabase/migrations/` (see "Extension recipes" below), not
+> `drop table` / `drop type`, which would destroy every real registration.
 
 ## Extension recipes
 

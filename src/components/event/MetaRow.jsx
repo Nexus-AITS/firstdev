@@ -1,3 +1,5 @@
+import { formatFee } from "../../data/events.js";
+
 const ITEMS = [
   { key: "date", label: "Date" },
   { key: "venue", label: "Venue" },
@@ -5,7 +7,7 @@ const ITEMS = [
   {
     key: "payment",
     label: "Payment",
-    format: (value) => (value ? `₹${value}` : "—"),
+    format: formatFee,
   },
   { key: "status", label: "Status" },
 ];

@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatMaxSize } from "../../data/events.js";
+import { formatFee, formatMaxSize } from "../../data/events.js";
 
 function ExploreLink({ id }) {
   return (
@@ -62,9 +62,10 @@ export default function EventRow({ event, index = 0 }) {
             {event.tagline}
           </p>
 
-          {event.payment ? (
+          {/* `!= null`, not truthy: payment 0 is a FREE entry, not "unknown". */}
+          {event.payment != null ? (
             <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
-              ₹{event.payment} · {formatMaxSize(event.maxSize)}
+              {formatFee(event.payment)} · {formatMaxSize(event.maxSize)}
             </p>
           ) : null}
 
