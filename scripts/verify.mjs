@@ -19,6 +19,7 @@ const ROUTES = [
   ["/about", "EVERYTHING"],
   ["/gateway", "NEXUS GATEWAY"],
   ["/bundled", "BUNDLED"],
+  ["/admin", "ADMIN CONSOLE"],
   ["/definitely-missing", "REALM NOT FOUND"],
 ];
 
@@ -242,6 +243,82 @@ for (const vp of VIEWPORTS) {
     "reduced-motion transition",
     `path=${path}${errs[0] ? ` err=${errs[0]}` : ""}`
   );
+  await ctx.close();
+}
+
+/* -------- admin console: dashboard stats, UTR confirm, remove -------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on("pageerror", (e) => errs.push(`PAGEERROR: ${e.message}`));
+  page.on("console", (m) => {
+    if (m.type() === "error" && !benign(m.text())) errs.push(m.text());
+  });
+  await page.goto(BASE + "/admin", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1500);
+
+  const num = async (sel) => Number((await page.locator(sel).innerText()).trim());
+  const total0 = await num("#stat-participants");
+  const colleges = await num("#stat-colleges");
+  const note = await page.locator("#admin-auth-note").count();
+  out(
+    total0 >= 10 && colleges >= 3 && note === 1,
+    "admin dashboard stats + auth note",
+    `participants=${total0} colleges=${colleges} note=${note}`
+  );
+
+  // sorting beside the search bar — name A–Z must put the alphabetically
+  // first roster name on top, and the control must reset cleanly
+  const rowName = async () =>
+    (await page.locator("#admin-table-wrap tbody tr td").nth(1).innerText())
+      .split("\n")[0]
+      .trim();
+  const names = await page.$$eval(
+    "#admin-table-wrap tbody tr td:nth-child(2)",
+    (cells) => cells.map((c) => c.innerText.split("\n")[0].trim())
+  );
+  const expectedFirst = [...names].sort((a, b) => a.localeCompare(b))[0];
+  await page.selectOption("#admin-sort", "name");
+  await page.waitForTimeout(300);
+  const firstAfter = await rowName();
+  out(
+    names.length === total0 && firstAfter === expectedFirst,
+    "admin sort beside search (name A-Z)",
+    `first "${firstAfter}" expected "${expectedFirst}" rows=${names.length}`
+  );
+  await page.selectOption("#admin-sort", "newest");
+  await page.waitForTimeout(300);
+
+  const confirms = page.locator('button[data-action="confirm"]');
+  const queued = await confirms.count();
+  const verified0 = await num("#stat-verified");
+  if (queued > 0) {
+    await confirms.first().click();
+    await page.waitForTimeout(400);
+    const verified1 = await num("#stat-verified");
+    out(
+      verified1 === verified0 + 1,
+      "admin confirm UTR -> verified",
+      `verified ${verified0} -> ${verified1}`
+    );
+  } else {
+    out(false, "admin confirm UTR -> verified", "no unverified rows in seed");
+  }
+
+  const totalR = await num("#stat-participants");
+  await page.locator('button[data-action="remove"]').first().click();
+  await page.waitForTimeout(250);
+  await page.locator('button[data-action="remove-confirm"]').first().click();
+  await page.waitForTimeout(400);
+  const totalD = await num("#stat-participants");
+  out(
+    totalD === totalR - 1,
+    "admin remove participant (two-step)",
+    `participants ${totalR} -> ${totalD}`
+  );
+
+  out(errs.length === 0, "admin console errors", errs[0] || "none");
   await ctx.close();
 }
 

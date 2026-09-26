@@ -21,6 +21,7 @@ const Paradox = lazy(() => import("./pages/Paradox.jsx"));
 const Arena = lazy(() => import("./pages/Arena.jsx"));
 const EventDetail = lazy(() => import("./pages/EventDetail.jsx"));
 const Bundled = lazy(() => import("./pages/Bundled.jsx"));
+const Admin = lazy(() => import("./pages/Admin.jsx"));
 const Gateway = lazy(() => import("./pages/Gateway.jsx"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback.jsx"));
 const NexusAI = lazy(() => import("./pages/NexusAI.jsx"));
@@ -66,6 +67,7 @@ export default function App() {
               <Route path="/events/arena" element={<Arena />} />
               <Route path="/events/:eventId" element={<EventDetail />} />
               <Route path="/bundled" element={<Bundled />} />
+              <Route path="/admin" element={<Admin />} />
               <Route path="/gateway" element={<Gateway />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/ai" element={<NexusAI />} />

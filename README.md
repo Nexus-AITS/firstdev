@@ -38,6 +38,7 @@ npm run preview  # preview build
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
+| `/admin`           | Admin console (unlinked)    |
 
 ## Data model (Supabase — staged)
 
@@ -51,6 +52,27 @@ admin confirms it (`verified`); rejected UTRs can be re-submitted. The schema
 is **not wired into the app yet**: no client library, no env keys, and RLS is
 enabled with zero policies so the table is inaccessible over the API until
 integration work begins.
+
+## Admin console (`/admin`)
+
+An operations console at **`/admin`** — deliberately **not linked from the
+navbar or footer**; open the URL directly. It provides:
+
+- a **clear dashboard** — total participants, distinct colleges that
+  participated, and payment-state counts (verified / to review / awaiting
+  UTR / rejected);
+- **all participant details** in one table — user id, name, contact, roll
+  number, college, year · department, **UTR**, submission date and status,
+  with search, status filters and a **sort select beside the search**
+  (newest / oldest, name A–Z, college, status — action first);
+- row actions — **Confirm** (admin confirms the UTR → status flips to
+  `verified` with `payment_verified_at`/`payment_verified_by` audit stamps),
+  **Reject**, and a two-step **Remove** participant.
+
+It runs on `src/data/registrations.js`, a local mirror of the Supabase schema
+whose functions map 1:1 to future Supabase calls (swap the internals when
+keys land). **Authentication is a planned follow-up pass** — until it ships,
+treat the `/admin` URL as private.
 
 ## Centralized external links
 
@@ -88,22 +110,30 @@ is reached with a top-level redirect, never an iframe or third-party script.
      the redirect is refused before it reaches the app).
 2. **Google Cloud → OAuth 2.0 Client**
    - Authorized redirect URI: `https://xvteqcvvjlxhwijwxbbq.supabase.co/auth/v1/callback`
-3. **Env vars** — copy `.env.example` → `.env.local` locally, and set
-   `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` in Vercel → Project →
-   Settings → Environment Variables (the anon key is public by design; a
-   service-role key must never appear).
+3. **Env vars** — copy `.env.example` → `.env` and fill in the anon /
+   publishable key (Vite loads `.env` automatically; `.env.local` also works
+   and takes precedence). On Vercel set the same two names in Project →
+   Settings → Environment Variables. The anon key is public by design, but
+   anything with a `VITE_` prefix is **inlined into the browser bundle** — a
+   service-role key or the database connection string must never go there.
 
 Without those env vars the site still builds and runs: every auth surface
 degrades to a status line instead of a dead button (`isAuthConfigured`).
 
-### The Supabase origin is duplicated in three CSPs
+### Where the Supabase origin lives
 
-`vite.config.js`, `public/_headers` and `vercel.json` each hardcode
-`https://xvteqcvvjlxhwijwxbbq.supabase.co` (headers files cannot read env
-vars). Change the Supabase project ⇒ update all three, or the browser
+`vite dev` and `vite preview` read `VITE_SUPABASE_URL` from `.env` and derive
+the CSP origin from it (`vite.config.js`). `public/_headers` (Netlify /
+Cloudflare) and `vercel.json` (the host in use) cannot read env vars, so those
+two hardcode `https://xvteqcvvjlxhwijwxbbq.supabase.co`. Change the Supabase
+project ⇒ update `.env`, `public/_headers` and `vercel.json`, or the browser
 silently blocks the auth requests. `connect-src` covers the token calls and
 `img-src` the Google avatars — **no** `accounts.google.com` script or frame is
 needed, because the redirect flow means Google never runs on this page.
+
+`npm run verify:google` asserts the navbar control really reaches Google
+(`accounts.google.com`), which is the check that catches a redirect URL
+missing from the Supabase allow list.
 
 > Note: `public/_headers` (Netlify / Cloudflare) and `vercel.json` are *not*
 > both honoured by any one host — Vercel only reads `vercel.json`. The SPA

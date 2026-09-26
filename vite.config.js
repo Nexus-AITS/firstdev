@@ -3,16 +3,6 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 /**
- * Security headers for `vite dev` and `vite preview`. The same set is
- * mirrored for real deployments in `public/_headers` (Netlify /
- * Cloudflare Pages) — keep both in sync when changing the policy.
- *
- * - dev relaxes script-src with 'unsafe-inline' (React Refresh injects an
- *   inline module) and allows ws: for HMR; preview/production is strict.
- * - HSTS is only sent by preview and is honored by browsers only over
- *   HTTPS, so it stays inert on localhost but is ready behind TLS.
- */
-/**
  * Supabase project backing Google sign-in.
  *
  * The dev/preview CSP takes the origin from `VITE_SUPABASE_URL` in `.env`
@@ -34,6 +24,16 @@ function resolveSupabaseOrigin(url) {
   }
 }
 
+/**
+ * Security headers for `vite dev` and `vite preview`. The same set is
+ * mirrored for real deployments in `public/_headers` (Netlify /
+ * Cloudflare Pages) — keep both in sync when changing the policy.
+ *
+ * - dev relaxes script-src with 'unsafe-inline' (React Refresh injects an
+ *   inline module) and allows ws: for HMR; preview/production is strict.
+ * - HSTS is only sent by preview and is honored by browsers only over
+ *   HTTPS, so it stays inert on localhost but is ready behind TLS.
+ */
 function securityHeadersPlugin(supabaseOrigin) {
   // NOTE: must return undefined — a returned Connect app would be mistaken
   // for Vite's "post configureServer" hook and called as a function.
@@ -84,22 +84,22 @@ export default defineConfig(({ mode }) => {
   const supabaseOrigin = resolveSupabaseOrigin(env.VITE_SUPABASE_URL);
   return {
     plugins: [react(), tailwindcss(), securityHeadersPlugin(supabaseOrigin)],
-  esbuild: mode === "production" ? { pure: ["console.log", "console.debug", "console.info"] } : {},
-  build: {
-    target: "es2020",
-    chunkSizeWarningLimit: 900,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          three: ["three", "@react-three/fiber"],
-          gsap: ["gsap"],
-          motion: ["framer-motion"],
+    // Strip casual console noise from production bundles; warn/error survive.
+    esbuild: mode === "production" ? { pure: ["console.log", "console.debug", "console.info"] } : {},
+    build: {
+      target: "es2020",
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            react: ["react", "react-dom", "react-router-dom"],
+            three: ["three", "@react-three/fiber"],
+            gsap: ["gsap"],
+            motion: ["framer-motion"],
+          },
         },
       },
     },
-  },
-  },
   };
 });
 
