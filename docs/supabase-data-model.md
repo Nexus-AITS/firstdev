@@ -96,8 +96,9 @@ security stance.
 - [ ] Add the project URL to `connect-src` in the CSP (`vite.config.js` `securityHeadersPlugin` **and** `public/_headers` — keep both in sync)
 - [ ] Registration form on `/gateway` inserting into `public.registrations`
 - [ ] UTR entry step setting `utr_number` + `payment_status = 'unverified'`
-- [ ] Admin console listing `unverified` rows with Confirm/Reject actions
-      (→ `verified` + `payment_verified_by`, or `rejected`)
+- [x] Admin console (`/admin`) — roster, dashboard totals, Confirm/Reject/Remove;
+      runs on the local mirror `src/data/registrations.js` (functions map 1:1
+      to Supabase calls) — point it at the API when keys land
 - [ ] RLS policies (participant may insert own row and submit a UTR only while
       `awaiting_utr`/`rejected`; only the service role/admin can set `verified`)
 - [ ] Optional payment webhook feeding the same status transitions

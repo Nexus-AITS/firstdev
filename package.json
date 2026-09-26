@@ -15,6 +15,7 @@
     "shot": "node scripts/shot.mjs",
     "shot:bundled": "node scripts/shot-bundled.mjs",
     "shot:pay": "node scripts/shot-pay.mjs",
+    "shot:admin": "node scripts/shot-admin.mjs",
     "shot:events": "node scripts/shot-events.mjs",
     "shot:realms": "node scripts/shot-realms.mjs",
     "shot:return": "node scripts/shot-return.mjs",

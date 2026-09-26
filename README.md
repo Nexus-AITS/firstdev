@@ -37,6 +37,7 @@ npm run preview  # preview build
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
+| `/admin`           | Admin console (unlinked)    |
 
 ## Data model (Supabase — staged)
 
@@ -50,6 +51,27 @@ admin confirms it (`verified`); rejected UTRs can be re-submitted. The schema
 is **not wired into the app yet**: no client library, no env keys, and RLS is
 enabled with zero policies so the table is inaccessible over the API until
 integration work begins.
+
+## Admin console (`/admin`)
+
+An operations console at **`/admin`** — deliberately **not linked from the
+navbar or footer**; open the URL directly. It provides:
+
+- a **clear dashboard** — total participants, distinct colleges that
+  participated, and payment-state counts (verified / to review / awaiting
+  UTR / rejected);
+- **all participant details** in one table — user id, name, contact, roll
+  number, college, year · department, **UTR**, submission date and status,
+  with search, status filters and a **sort select beside the search**
+  (newest / oldest, name A–Z, college, status — action first);
+- row actions — **Confirm** (admin confirms the UTR → status flips to
+  `verified` with `payment_verified_at`/`payment_verified_by` audit stamps),
+  **Reject**, and a two-step **Remove** participant.
+
+It runs on `src/data/registrations.js`, a local mirror of the Supabase schema
+whose functions map 1:1 to future Supabase calls (swap the internals when
+keys land). **Authentication is a planned follow-up pass** — until it ships,
+treat the `/admin` URL as private.
 
 ## Centralized external links
 
