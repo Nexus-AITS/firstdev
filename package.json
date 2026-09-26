@@ -13,6 +13,7 @@
     "verify:data": "node scripts/verify-data.mjs",
     "db:ping": "node scripts/supabase-ping.mjs",
     "db:migrate": "node scripts/apply-migration.mjs",
+    "verify:google": "node scripts/verify-google.mjs",
     "stress": "node scripts/stress-scroll.mjs",
     "shot": "node scripts/shot.mjs",
     "shot:bundled": "node scripts/shot-bundled.mjs",

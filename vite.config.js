@@ -3,6 +3,28 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 /**
+ * Supabase project backing Google sign-in.
+ *
+ * The dev/preview CSP takes the origin from `VITE_SUPABASE_URL` in `.env`
+ * (read via loadEnv below), falling back to the known project when the env
+ * var is absent so an unconfigured build still ships a working policy.
+ * public/_headers and vercel.json must still hardcode the origin — static
+ * headers files cannot read env vars — so changing the Supabase project
+ * means updating those two as well, or the browser silently blocks auth.
+ */
+const FALLBACK_SUPABASE_ORIGIN = "https://xvteqcvvjlxhwijwxbbq.supabase.co";
+
+/** Origin of a URL, or the fallback when the value is missing/malformed. */
+function resolveSupabaseOrigin(url) {
+  if (!url) return FALLBACK_SUPABASE_ORIGIN;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return FALLBACK_SUPABASE_ORIGIN;
+  }
+}
+
+/**
  * Security headers for `vite dev` and `vite preview`. The same set is
  * mirrored for real deployments in `public/_headers` (Netlify /
  * Cloudflare Pages) — keep both in sync when changing the policy.
@@ -12,7 +34,7 @@ import tailwindcss from "@tailwindcss/vite";
  * - HSTS is only sent by preview and is honored by browsers only over
  *   HTTPS, so it stays inert on localhost but is ready behind TLS.
  */
-function securityHeadersPlugin(supabaseUrl) {
+function securityHeadersPlugin(supabaseOrigin) {
   // NOTE: must return undefined — a returned Connect app would be mistaken
   // for Vite's "post configureServer" hook and called as a function.
   const apply = (server, { preview }) => {
@@ -22,9 +44,8 @@ function securityHeadersPlugin(supabaseUrl) {
         `script-src 'self'${preview ? "" : " 'unsafe-inline'"}`,
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
-        "img-src 'self' data: blob:",
-        // Supabase REST — registration writes go to the remote project
-        `connect-src 'self'${supabaseUrl ? ` ${supabaseUrl}` : ""}${preview ? "" : " ws: wss:"}`,
+        "img-src 'self' data: blob: https://*.googleusercontent.com",
+        `connect-src 'self' ${supabaseOrigin}${preview ? "" : " ws: wss:"}`,
         "worker-src 'self' blob:",
         "object-src 'none'",
         "base-uri 'self'",
@@ -57,12 +78,12 @@ function securityHeadersPlugin(supabaseUrl) {
 }
 
 export default defineConfig(({ mode }) => {
-  // .env is the single source of the Supabase project URL; mirror it into the
-  // CSP so the browser may talk to PostgREST (see also public/_headers).
-  const env = loadEnv(mode, process.cwd(), "");
-  const supabaseUrl = (env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
+  // `.env` is the single source of truth for the Supabase origin at dev and
+  // preview time; production headers live in public/_headers + vercel.json.
+  const env = loadEnv(mode, process.cwd(), "VITE_");
+  const supabaseOrigin = resolveSupabaseOrigin(env.VITE_SUPABASE_URL);
   return {
-    plugins: [react(), tailwindcss(), securityHeadersPlugin(supabaseUrl)],
+    plugins: [react(), tailwindcss(), securityHeadersPlugin(supabaseOrigin)],
     // Strip casual console noise from production bundles; warn/error survive.
     esbuild: mode === "production" ? { pure: ["console.log", "console.debug", "console.info"] } : {},
     build: {

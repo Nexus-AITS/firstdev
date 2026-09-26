@@ -2,6 +2,7 @@ import { Suspense, lazy } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import useSmoothScroll from "./hooks/useSmoothScroll";
+import { AuthProvider } from "./context/AuthContext";
 import { TransitionProvider } from "./context/TransitionContext";
 import { RealmEntryProvider } from "./context/RealmEntryContext";
 import Navbar from "./components/layout/Navbar.jsx";
@@ -23,6 +24,7 @@ const Bundled = lazy(() => import("./pages/Bundled.jsx"));
 const Admin = lazy(() => import("./pages/Admin.jsx"));
 const Gateway = lazy(() => import("./pages/Gateway.jsx"));
 const Register = lazy(() => import("./pages/Register.jsx"));
+const AuthCallback = lazy(() => import("./pages/AuthCallback.jsx"));
 const NexusAI = lazy(() => import("./pages/NexusAI.jsx"));
 const About = lazy(() => import("./pages/About.jsx"));
 const NotFound = lazy(() => import("./pages/NotFound.jsx"));
@@ -45,6 +47,7 @@ export default function App() {
   useSmoothScroll();
 
   return (
+    <AuthProvider>
     <TransitionProvider>
       <RealmEntryProvider>
         <div className="relative flex min-h-screen flex-col overflow-x-hidden bg-void">
@@ -68,6 +71,7 @@ export default function App() {
               <Route path="/admin" element={<Admin />} />
               <Route path="/gateway" element={<Gateway />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/ai" element={<NexusAI />} />
               <Route path="/about" element={<About />} />
               <Route path="*" element={<NotFound />} />
@@ -81,5 +85,6 @@ export default function App() {
       </div>
       </RealmEntryProvider>
     </TransitionProvider>
+    </AuthProvider>
   );
 }

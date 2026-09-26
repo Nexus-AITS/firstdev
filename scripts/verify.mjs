@@ -72,6 +72,33 @@ for (const vp of VIEWPORTS) {
   await ctx.close();
 }
 
+/* -------- auth callback: always renders a decisive state -------- */
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await ctx.newPage();
+  const errs = [];
+  page.on("pageerror", (e) => errs.push(`PAGEERROR: ${e.message}`));
+  await page.goto(BASE + "/auth/callback", { waitUntil: "domcontentloaded", timeout: 20000 });
+  await page.waitForTimeout(1200);
+  const h1 = (await page.evaluate(() => document.querySelector("h1")?.textContent)) || "";
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth
+  );
+  // The headline depends on whether VITE_SUPABASE_* were present at build time:
+  // an unconfigured build must say so, a configured one must be mid-exchange
+  // (a bare `?code=` visit resolves to a refused state after the watchdog).
+  const decisive =
+    /CROSSING THE THRESHOLD|SIGNATURE ACCEPTED|THE THRESHOLD REFUSED|SIGN-IN UNAVAILABLE/.test(
+      h1
+    );
+  out(
+    decisive && overflow <= 2 && errs.length === 0,
+    `auth callback   /auth/callback`,
+    `h1="${h1.trim().slice(0, 40)}" overflow=${overflow}${errs.length ? ` errors=${errs[0]}` : ""}`
+  );
+  await ctx.close();
+}
+
 /* -------- ENTER NEXUS full cinematic transition -------- */
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });

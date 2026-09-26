@@ -1,0 +1,7 @@
+/events/*    /index.html   200
+/events      /index.html   200
+/bundled     /index.html   200
+/gateway     /index.html   200
+/auth/*      /index.html   200
+/ai          /index.html   200
+/about       /index.html   200

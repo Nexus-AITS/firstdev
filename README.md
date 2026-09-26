@@ -35,6 +35,7 @@ npm run preview  # preview build
 | `/events/:eventId` | Event detail                |
 | `/register`         | Registration wizard (details → payment QR → UTR) |
 | `/gateway`          | Legacy hand-off → redirects to `/register` |
+| `/auth/callback`    | Google sign-in landing      |
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
@@ -91,6 +92,59 @@ Nexus AI hand-off). Replace `https://YOUR-REAL-APP-URL...` with the real
 application — nothing else needs to change.
 
 Event content lives in **`src/data/events.js`** (add/edit events there).
+
+## Google sign-in (Supabase)
+
+"Sign in with Google" is delegated to **Supabase Auth** (`provider: "google"`),
+so the browser only talks to the Supabase project — the Google consent screen
+is reached with a top-level redirect, never an iframe or third-party script.
+
+- **Client:** `src/config/supabase.js` (env-driven) → **`src/context/AuthContext.jsx`**
+  → `src/components/auth/` (`AuthControl`, `GoogleSignIn`, `ProfileChip`).
+- **Routes:** sign-in lives in the navbar, the mobile menu and `/gateway`;
+  `/auth/callback` narrates the PKCE `?code=` exchange and then continues to
+  where the sign-in started (remembered in `sessionStorage`, one-shot).
+- **Flow:** `flowType: "pkce"` + `detectSessionInUrl: true`, so Supabase swaps
+  the code for a session automatically on the callback page load.
+
+### Configure once per environment
+
+1. **Supabase → Auth → URL Configuration**
+   - Site URL: `https://nexus.n-events.tech`
+   - Redirect URLs: `https://nexus.n-events.tech/auth/callback` **and**
+     `http://localhost:5173/auth/callback` (the origin must match exactly, or
+     the redirect is refused before it reaches the app).
+2. **Google Cloud → OAuth 2.0 Client**
+   - Authorized redirect URI: `https://xvteqcvvjlxhwijwxbbq.supabase.co/auth/v1/callback`
+3. **Env vars** — copy `.env.example` → `.env` and fill in the anon /
+   publishable key (Vite loads `.env` automatically; `.env.local` also works
+   and takes precedence). On Vercel set the same two names in Project →
+   Settings → Environment Variables. The anon key is public by design, but
+   anything with a `VITE_` prefix is **inlined into the browser bundle** — a
+   service-role key or the database connection string must never go there.
+
+Without those env vars the site still builds and runs: every auth surface
+degrades to a status line instead of a dead button (`isAuthConfigured`).
+
+### Where the Supabase origin lives
+
+`vite dev` and `vite preview` read `VITE_SUPABASE_URL` from `.env` and derive
+the CSP origin from it (`vite.config.js`). `public/_headers` (Netlify /
+Cloudflare) and `vercel.json` (the host in use) cannot read env vars, so those
+two hardcode `https://xvteqcvvjlxhwijwxbbq.supabase.co`. Change the Supabase
+project ⇒ update `.env`, `public/_headers` and `vercel.json`, or the browser
+silently blocks the auth requests. `connect-src` covers the token calls and
+`img-src` the Google avatars — **no** `accounts.google.com` script or frame is
+needed, because the redirect flow means Google never runs on this page.
+
+`npm run verify:google` asserts the navbar control really reaches Google
+(`accounts.google.com`), which is the check that catches a redirect URL
+missing from the Supabase allow list.
+
+> Note: `public/_headers` (Netlify / Cloudflare) and `vercel.json` are *not*
+> both honoured by any one host — Vercel only reads `vercel.json`. The SPA
+> fallback is likewise mirrored as `public/_redirects` and the `vercel.json`
+> rewrite, without which deep links 404 on a hard refresh.
 
 ## Accessibility & performance
 
