@@ -9,7 +9,7 @@ const TILTS = [-0.6, 0.5, -0.4, 0.7, -0.5];
 const CLIP =
   "polygon(0 0, calc(100% - 30px) 0, 100% 30px, 100% 100%, 30px 100%, 0 calc(100% - 30px))";
 
-/** THE PARADOX — offset shard panels, experimental composition. */
+/** NEXUS OFF-GRID — offset shard panels, experimental composition. */
 export default function ParadoxCard({ event, index = 0 }) {
   const shift = SHIFTS[index % SHIFTS.length];
   const tilt = TILTS[index % TILTS.length];

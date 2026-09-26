@@ -12,7 +12,7 @@ const HACKATHON_ID =
   events.find((event) => event.category === "HACKATHON")?.id ?? "nexus-breach";
 
 const bundlesList = [
-  /* ----------------------- NEXUS · THE FORGE BUNDLED ----------------------- */
+  /* ----------------------- NEXUS REBUILDERS BUNDLED ----------------------- */
   {
     id: "bundled-299",
     number: "01",
@@ -32,7 +32,7 @@ const bundlesList = [
   {
     id: "forge-bundled-349",
     number: "03",
-    name: "FORGE BUNDLED",
+    name: "NEXUS REBUILDERS BUNDLED",
     price: "349",
     group: "nexus-forge",
     includes: [
@@ -43,7 +43,7 @@ const bundlesList = [
   {
     id: "forge-bundled-399",
     number: "04",
-    name: "FORGE BUNDLED",
+    name: "NEXUS REBUILDERS BUNDLED",
     price: "399",
     group: "nexus-forge",
     includes: [
@@ -66,7 +66,7 @@ const bundlesList = [
     // same display name & price as #04 by spec — contents below differ
     id: "forge-paradox-bundled-399",
     number: "06",
-    name: "FORGE BUNDLED",
+    name: "NEXUS REBUILDERS BUNDLED",
     price: "399",
     group: "nexus-forge",
     includes: [
@@ -76,11 +76,11 @@ const bundlesList = [
     ],
   },
 
-  /* --------------------------- PARADOX BUNDLED --------------------------- */
+  /* -------------------------- NEXUS OFF-GRID BUNDLED -------------------------- */
   {
     id: "paradox-bundled-249",
     number: "07",
-    name: "PARADOX BUNDLED",
+    name: "NEXUS OFF-GRID BUNDLED",
     price: "249",
     group: "paradox",
     includes: [{ pick: "paradox", count: 2 }],
@@ -88,7 +88,7 @@ const bundlesList = [
   {
     id: "paradox-bundled-349",
     number: "08",
-    name: "PARADOX BUNDLED",
+    name: "NEXUS OFF-GRID BUNDLED",
     price: "349",
     group: "paradox",
     includes: [{ pick: "paradox", count: 3 }],
@@ -100,14 +100,14 @@ export const bundleGroups = [
   {
     id: "nexus-forge",
     kicker: "Payment bundles · 01 — 06",
-    titleLines: ["NEXUS", "THE FORGE BUNDLED"],
+    titleLines: ["NEXUS", "REBUILDERS BUNDLED"],
     grid: "md:grid-cols-2 lg:grid-cols-3",
     bundles: bundlesList.filter((bundle) => bundle.group === "nexus-forge"),
   },
   {
     id: "paradox",
     kicker: "Payment bundles · 07 — 08",
-    titleLines: ["PARADOX BUNDLED"],
+    titleLines: ["NEXUS", "OFF-GRID BUNDLED"],
     grid: "mx-auto w-full max-w-4xl md:grid-cols-2",
     bundles: bundlesList.filter((bundle) => bundle.group === "paradox"),
   },

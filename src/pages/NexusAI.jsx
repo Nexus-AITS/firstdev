@@ -12,8 +12,8 @@ const NODES = [
 
 const TRANSCRIPT = [
   { cmd: true, text: "> nexus --query \"which realm fits a builder?\"" },
-  { cmd: false, text: "▸ THE FORGE — 5 events. NEXUS BREACH opens in 03:12:44." },
-  { cmd: true, text: "> nexus --query \"what breaks the paradox?\"" },
+  { cmd: false, text: "▸ NEXUS REBUILDERS — 5 events. NEXUS BREACH opens in 03:12:44." },
+  { cmd: true, text: "> nexus --query \"what breaks the off-grid?\"" },
   { cmd: false, text: "▸ Everything scheduled. Bring questions instead." },
 ];
 

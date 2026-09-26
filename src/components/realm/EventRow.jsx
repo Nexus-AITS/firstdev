@@ -25,7 +25,7 @@ function ExploreLink({ id }) {
   );
 }
 
-/** THE FORGE — alternating cinematic event rows with ghost numerals. */
+/** NEXUS REBUILDERS — alternating cinematic event rows with ghost numerals. */
 export default function EventRow({ event, index = 0 }) {
   const flip = index % 2 === 1;
 

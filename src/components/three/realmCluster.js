@@ -18,7 +18,7 @@ export function buildRealmCluster(realmId, seed = 2065) {
   return buildArena(rnd);
 }
 
-// ---- THE FORGE: an engineered reactor column + coil blades + containment
+// ---- NEXUS REBUILDERS: an engineered reactor column + coil blades + containment
 function buildForge(rnd) {
   const shards = [];
   const central = {
@@ -70,7 +70,7 @@ function buildForge(rnd) {
   };
 }
 
-// ---- THE PARADOX: a fractured core, chaotic, with gold seep ----
+// ---- NEXUS OFF-GRID: a fractured core, chaotic, with gold seep ----
 function buildParadox(rnd) {
   const shards = [];
   // two halves of a split shard — the fracture IS the portal

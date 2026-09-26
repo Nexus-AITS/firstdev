@@ -6,7 +6,7 @@
  * payment = entry fee in ₹, maxSize = team cap ("individual" = solo entry).
  */
 export const events = [
-  /* ---------------------------- THE FORGE ---------------------------- */
+  /* ------------------------- NEXUS REBUILDERS ------------------------- */
   {
     id: "nexus-breach",
     number: "01",
@@ -112,7 +112,7 @@ export const events = [
     sigil: "rebuild",
     linkKey: "codeRebuilding",
   },
-  /* --------------------------- THE PARADOX --------------------------- */
+  /* -------------------------- NEXUS OFF-GRID -------------------------- */
   {
     id: "the-scientist-files",
     number: "01",
@@ -167,7 +167,7 @@ export const events = [
       "Oct 6, 11:00 AM – 3:30 PM. Bring your own smartphone or camera; photographs must be original and taken during the allotted window (no AI-generated or pre-shot entries), with consent before shooting identifiable people. Judging weighs composition, creativity, storytelling, technical quality and interpretation of the theme.",
     ],
     date: "OCT 6, 2026",
-    venue: "THE PARADOX — CITY SECTORS",
+    venue: "NEXUS OFF-GRID — CITY SECTORS",
     teamSize: "SOLO",
     payment: 149,
     maxSize: "individual",
@@ -188,7 +188,7 @@ export const events = [
       "Oct 6, 10:00 AM – 12:30 PM. Bring a laptop or smartphone; memes must be original, created within the allotted time and suitable for a college audience. Judging focuses on humour, creativity, originality and futuristic relevance.",
     ],
     date: "OCT 6, 2026",
-    venue: "THE PARADOX — GLITCH DECK",
+    venue: "NEXUS OFF-GRID — GLITCH DECK",
     teamSize: "SOLO",
     payment: 149,
     maxSize: "individual",

@@ -10,14 +10,14 @@
 export const APPLICATION_BASE_URL = "https://YOUR-REAL-APP-URL";
 
 export const eventLinks = {
-  // The Forge
+  // NEXUS REBUILDERS
   nexusBreach: "https://YOUR-REAL-APP-URL/events/nexus-breach",
   vision2065: "https://YOUR-REAL-APP-URL/events/vision-2065",
   circuitsOfNexus: "https://YOUR-REAL-APP-URL/events/circuits-of-nexus",
   aiTuringGambit: "https://YOUR-REAL-APP-URL/events/ai-turing-gambit",
   codeRebuilding: "https://YOUR-REAL-APP-URL/events/code-rebuilding",
 
-  // The Paradox
+  // NEXUS OFF-GRID
   scientistFiles: "https://YOUR-REAL-APP-URL/events/the-scientist-files",
   paradox2065: "https://YOUR-REAL-APP-URL/events/paradox-2065",
   shutterQuest: "https://YOUR-REAL-APP-URL/events/shutter-quest",

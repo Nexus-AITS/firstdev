@@ -23,7 +23,7 @@ await desktop.screenshot({ path: "artifacts/screenshots/events-intro.png" });
 await desktop.waitForTimeout(3600); // fully revealed
 await desktop.screenshot({ path: "artifacts/screenshots/events-desktop.png" });
 
-// hover dominance: focus the Forge
+// hover dominance: focus NEXUS REBUILDERS
 const forge = desktop.locator('main a[href="/events/forge"]');
 await forge.hover();
 await desktop.waitForTimeout(1400);

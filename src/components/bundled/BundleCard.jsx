@@ -2,7 +2,7 @@ import Reveal from "../ui/Reveal.jsx";
 import CinematicButton from "../ui/CinematicButton.jsx";
 import { describeInclude, getPickPool } from "../../data/bundles.js";
 
-// notched shard silhouette — matches the Paradox card language
+// notched shard silhouette — matches the Off-Grid card language
 const CLIP =
   "polygon(0 0, calc(100% - 26px) 0, 100% 26px, 100% 100%, 26px 100%, 0 calc(100% - 26px))";
 

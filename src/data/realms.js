@@ -3,7 +3,7 @@ export const realms = {
   forge: {
     id: "forge",
     route: "/events/forge",
-    name: "THE FORGE",
+    name: "NEXUS REBUILDERS",
     kicker: "TECHNICAL EVENTS",
     subtitle: "THE TECHNICAL REALM",
     mantra: "BUILD • BREAK • REBUILD",
@@ -15,7 +15,7 @@ export const realms = {
   paradox: {
     id: "paradox",
     route: "/events/paradox",
-    name: "THE PARADOX",
+    name: "NEXUS OFF-GRID",
     kicker: "NON-TECHNICAL EVENTS",
     subtitle: "THE NON-TECHNICAL REALM",
     mantra: "IMAGINE • QUESTION • CREATE",

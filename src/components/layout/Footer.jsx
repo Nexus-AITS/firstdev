@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 const QUICK = [
   { to: "/", label: "HOME" },
   { to: "/events", label: "EVENTS" },
-  { to: "/events/forge", label: "THE FORGE" },
-  { to: "/events/paradox", label: "THE PARADOX" },
+  { to: "/events/forge", label: "NEXUS REBUILDERS" },
+  { to: "/events/paradox", label: "NEXUS OFF-GRID" },
   { to: "/events/arena", label: "THE ARENA" },
   { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },

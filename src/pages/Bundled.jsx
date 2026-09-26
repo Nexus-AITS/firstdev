@@ -17,7 +17,7 @@ const STEPS = [
   {
     n: "01",
     title: "CHOOSE YOUR BUNDLE",
-    text: "Eight combinations across the Nexus, the Forge and the Paradox — pick the one that fits your schedule.",
+    text: "Eight combinations across the Nexus, NEXUS REBUILDERS and NEXUS OFF-GRID — pick the one that fits your schedule.",
   },
   {
     n: "02",
@@ -63,7 +63,7 @@ export default function Bundled() {
           <Reveal delay={0.5}>
             <p className="mx-auto mt-7 max-w-2xl text-sm leading-relaxed tracking-wide text-crystal/60">
               Eight ways to pay for more than one event — bundle the Hackathon
-              with the Forge or the Paradox, run a realm alone, and claim every
+              with NEXUS REBUILDERS or NEXUS OFF-GRID, run a realm alone, and claim every
               seat in the bundle at a single price.
             </p>
           </Reveal>

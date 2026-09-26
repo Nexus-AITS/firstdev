@@ -5,7 +5,7 @@ import Scanlines from "./Scanlines.jsx";
  * Realm gateway environment layer.
  * Always-on: deep nebula pools, the realm-tinted veil (focus-driven),
  * drifting fragments and bottom fog. `mode` layers the focused realm's
- * signature on top — circuitry (Forge), abstract shards + gold (Paradox),
+ * signature on top — circuitry (Rebuilders), abstract shards + gold (Off-Grid),
  * HUD rings + scanlines (Arena).
  */
 export default function RealmFX({ mode = "stars", tint = "#7c3aed", className = "" }) {

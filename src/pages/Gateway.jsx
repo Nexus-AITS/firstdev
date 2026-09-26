@@ -19,7 +19,7 @@ const STEPS = [
   {
     n: "01",
     title: "CHOOSE IN THE REALMS",
-    text: "Browse the Forge, the Paradox and the Arena, then open the event you want to enter.",
+    text: "Browse NEXUS REBUILDERS, NEXUS OFF-GRID and the Arena, then open the event you want to enter.",
   },
   {
     n: "02",

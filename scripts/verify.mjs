@@ -9,8 +9,8 @@ const BASE = "http://localhost:4173";
 const ROUTES = [
   ["/", "NEXUS"],
   ["/events", "WELCOME TO THE NEXUS"],
-  ["/events/forge", "THE FORGE"],
-  ["/events/paradox", "THE PARADOX"],
+  ["/events/forge", "NEXUS REBUILDERS"],
+  ["/events/paradox", "NEXUS OFF-GRID"],
   ["/events/arena", "THE ARENA"],
   ["/events/nexus-breach", "NEXUS BREACH"],
   ["/events/the-scientist-files", "THE SCIENTIST FILES"],
