@@ -54,8 +54,12 @@ if (health.status !== 200) {
 }
 console.log("key accepted by GoTrue (project alive)");
 
-/* ---------- 2) real query against registrations ---------- */
-const { data, error } = await supabase
+/* ---------- 2) reachability of registrations (anon) ----------
+ * Since Phase 2 the anon role has NO grants on this table at all, so
+ * "permission denied" is the CORRECT and expected answer, not a fault. A
+ * 42501 here proves both that the table exists and that RLS is closed; the
+ * schema itself is inspected with a privileged query below. */
+const { error } = await supabase
   .from("registrations")
   .select("id, name, email, payment_status")
   .limit(5);
@@ -69,21 +73,55 @@ if (error) {
     );
     process.exit(1);
   }
-  console.error(`FAIL: select on public.registrations -> ${error.message} (${error.code ?? "n/a"})`);
+  if (error.code === "42501" || /permission denied/i.test(error.message)) {
+    console.log("PASS: public.registrations exists and is closed to the anon key (RLS)");
+  } else {
+    console.error(`FAIL: select on public.registrations -> ${error.message} (${error.code ?? "n/a"})`);
+    process.exit(1);
+  }
+} else {
+  // Not an error, but worth flagging: if anon can read the roster, the Phase 2
+  // policies are not in force and participant PII is exposed.
+  console.error(
+    "FAIL: the anon key CAN read public.registrations — the Phase 2 RLS policies are\n" +
+      "      not applied. Run `npm run db:migrate` and then `npm run verify:rls`."
+  );
   process.exit(1);
 }
 
-console.log(`PASS: connected — public.registrations exists`);
-if (data.length === 0) {
-  console.log(
-    "note: 0 rows visible to the anon key — RLS is deny-by-default by design\n" +
-      "      (migration section 6). Seed rows live in the table; they are visible\n" +
-      "      via the SQL editor / npm run db:migrate until policies are added."
-  );
-} else {
-  console.log(`rows visible to anon (showing ${data.length}):`);
-  for (const r of data) {
-    console.log(`  - ${r.name ?? r.email ?? r.id} | ${r.payment_status ?? "-"}`);
+/* ---------- 3) row count, as postgres (RLS bypassed) ---------- */
+const token = process.env.SUPABASE_ACCESS_TOKEN || env.SUPABASE_ACCESS_TOKEN;
+if (token) {
+  const ref = new URL(url).hostname.split(".")[0];
+  const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query:
+        "select count(*)::int as total, " +
+        "count(*) filter (where user_id is null)::int as unclaimed from public.registrations;",
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (res.ok) {
+    const parsed = JSON.parse(await res.text());
+    const rows = Array.isArray(parsed) ? parsed : (parsed.result ?? []);
+    const r = rows[0] ?? {};
+    console.log(`rows in public.registrations: ${r.total ?? "?"} (unclaimed: ${r.unclaimed ?? "?"})`);
+    if (r.total === 0) {
+      console.log("note: the roster is empty — the database holds only real registrations.");
+    }
+    if (r.unclaimed > 0) {
+      console.log(
+        "note: some rows predate ownership (migration ...0003). Their authors reclaim\n" +
+          "      them by submitting a reference with the same email address."
+      );
+    }
+  } else {
+    console.log("note: SUPABASE_ACCESS_TOKEN absent — skipped the privileged row count.");
   }
+} else {
+  console.log("note: SUPABASE_ACCESS_TOKEN absent — skipped the privileged row count.");
 }
+
 console.log("ALL CHECKS PASSED — Supabase reachable with .env credentials");

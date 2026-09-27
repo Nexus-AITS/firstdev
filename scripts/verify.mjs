@@ -25,7 +25,8 @@ const ROUTES = [
   ["/register", "EVENT REGISTER"],
   ["/gateway", "EVENT REGISTER"], // legacy hand-off redirects into /register
   ["/bundled", "BUNDLED"],
-  ["/admin123456789", "ADMIN CONSOLE"],
+  ["/nexus-admin", "Staff sign in"], // console gate: heading is the sign-in prompt
+  ["/admin123456789", "Staff sign in"], // the retired path redirects here
   ["/admin", "REALM NOT FOUND"], // old console URL must stay dead
   ["/definitely-missing", "REALM NOT FOUND"],
 ];
@@ -162,9 +163,12 @@ for (const vp of VIEWPORTS) {
   await page.waitForTimeout(900);
   const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
   out(ctxCard === 1, "register event context card", `count=${ctxCard}`);
+  // Signed out, the wizard stops at the identity gate: the details step is
+  // intentionally not reachable until a Google session exists.
   out(
-    await page.locator("#reg-step-details").isVisible(),
-    "register opens on details step",
+    (await page.locator("#reg-auth-gate").isVisible().catch(() => false)) &&
+      (await page.locator("#reg-step-details").isVisible().catch(() => false)) === false,
+    "register stops at the identity gate",
     ""
   );
 
@@ -179,7 +183,7 @@ for (const vp of VIEWPORTS) {
   out(
     bUrl.pathname === "/register" &&
       bUrl.searchParams.get("bundle") === "bundled-299" &&
-      (await page.locator("#reg-step-details").isVisible()),
+      (await page.locator("#reg-auth-gate").isVisible().catch(() => false)),
     "bundle register hand-off",
     `${bUrl.pathname}${bUrl.search}`
   );
@@ -220,16 +224,17 @@ for (const vp of VIEWPORTS) {
   // …and its wizard must offer two steps only: no fee strip, no QR/UTR copy.
   await page.goto(BASE + "/register?event=free-fire", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const freeDetails = await page.locator("#reg-step-details").isVisible().catch(() => false);
+  // The stepper is hidden while signed out, so the step COUNT is read from the
+  // rendered list rather than its visibility.
   const freeSteps = await page
     .locator('ol[aria-label="Registration progress"] li')
     .count();
   const feeStrip = await page.getByText("entry fee", { exact: true }).count();
   const qrCopy = await page.getByText("pay with the QR below").count();
   out(
-    freeDetails && freeSteps === 2 && feeStrip === 0 && qrCopy === 0,
+    freeSteps === 2 && feeStrip === 0 && qrCopy === 0,
     "free event wizard skips payment (2 steps, no QR/UTR)",
-    `details=${freeDetails} steps=${freeSteps} feeStrip=${feeStrip} qrCopy=${qrCopy}`
+    `steps=${freeSteps} feeStrip=${feeStrip} qrCopy=${qrCopy}`
   );
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
@@ -282,7 +287,15 @@ for (const vp of VIEWPORTS) {
   await ctx.close();
 }
 
-/* -------- register wizard: details → payment QR → UTR → success -------- */
+/* -------- register wizard: the Google sign-in gate -------- */
+/*
+ * This suite cannot complete a registration: doing so needs a real Google
+ * account, and asserting against a stubbed session would prove only that the
+ * stub works. So what is checked here is the part that IS the security
+ * boundary — an unsigned visitor must not be able to reach the form at all.
+ * The RLS rules behind it are proven separately, against the live project, by
+ * `npm run verify:rls`.
+ */
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
@@ -303,70 +316,51 @@ for (const vp of VIEWPORTS) {
     `${u.pathname}${u.search}`
   );
 
-  // step 1 — details form
-  out(await page.locator("#reg-step-details").isVisible(), "wizard step 1: details form");
-  await page.fill("#reg-name", "Tessa Verify");
-  await page.fill("#reg-roll", "24T99A0007");
-  await page.fill("#reg-college", "AITS Tirupati");
-  await page.selectOption("#reg-year", "2nd");
-  await page.fill("#reg-dept", "ECE");
-  await page.fill("#reg-phone", "9000000099");
-  await page.fill("#reg-email", `tessa.verify+${Date.now()}@example.com`);
-  await page.click("#reg-details-next");
-  await page.waitForTimeout(700);
+  // The gate is the decisive assertion: the details form must NOT be reachable.
+  // Before phase 2 the form rendered for anyone and the database rejected the
+  // insert; now the page refuses first, so a signed-out visitor is told why
+  // instead of watching a submission silently fail.
+  const gate = await page.locator("#reg-auth-gate").isVisible().catch(() => false);
+  const form = await page.locator("#reg-step-details").isVisible().catch(() => false);
+  out(gate && !form, "register gates the form behind Google sign-in", `gate=${gate} form=${form}`);
 
-  // step 2 — payment QR
-  const payVisible = await page.locator("#reg-step-pay").isVisible().catch(() => false);
-  const qrVisible = await page.locator("#reg-qr").isVisible().catch(() => false);
-  const feeShown = (await page.getByText("₹349").count()) >= 1;
-  out(
-    payVisible && qrVisible && feeShown,
-    "wizard step 2: payment QR + fee",
-    `pay=${payVisible} qr=${qrVisible} fee=${feeShown}`
-  );
-  await page.click("#reg-pay-next");
-  await page.waitForTimeout(500);
+  const signInCta = await page.getByRole("button", { name: /sign in to register/i }).count();
+  out(signInCta === 1, "register gate offers the sign-in action", `count=${signInCta}`);
 
-  // step 3 — UTR field
-  out(await page.locator("#reg-step-utr").isVisible(), "wizard step 3: UTR field");
-  await page.fill("#reg-utr", "998877665511");
-  await page.click("#reg-utr-submit");
-  // local write is instant; the screen appears after the best-effort cloud
-  // sync resolves (may take a few seconds on a cold connection)
-  const success = await page
-    .locator("#reg-success")
-    .waitFor({ state: "visible", timeout: 12000 })
-    .then(() => true)
+  // The stepper is progress toward a wizard you cannot start yet, so it is
+  // hidden rather than shown in a permanently unreachable state.
+  const steps = await page.locator('ol[aria-label="Registration progress"] li').count();
+  const stepperVisible = await page
+    .locator('ol[aria-label="Registration progress"]')
+    .isVisible()
     .catch(() => false);
-  out(success, "wizard success screen");
-
-  // the row must land in the store the admin console reads, unverified with the UTR
-  const stored = await page.evaluate(() => {
-    try {
-      const rows = JSON.parse(localStorage.getItem("nexus.registrations.v1") || "[]");
-      return rows.find((r) => r.email && r.email.startsWith("tessa.verify+")) || null;
-    } catch {
-      return null;
-    }
-  });
   out(
-    Boolean(
-      stored &&
-        stored.payment_status === "unverified" &&
-        stored.utr_number === "998877665511" &&
-        stored.purchase_type === "event" &&
-        stored.purchase_label
-    ),
-    "wizard persists to admin store (unverified + UTR + purchase)",
-    stored
-      ? `status=${stored.payment_status} utr=${stored.utr_number} purchase=${stored.purchase_type}/${stored.purchase_label}`
-      : "row missing"
+    !stepperVisible || steps === 0,
+    "register hides the stepper while signed out",
+    `visible=${stepperVisible} items=${steps}`
   );
-  out(errs.length === 0, "wizard console errors", errs[0] || "none");
+
+  // Event context must still be advertised above the gate — the visitor is
+  // choosing what to register for before being asked to identify themselves.
+  const ctxCard = await page.getByRole("heading", { name: /NEXUS BREACH/i }).count();
+  const fee = await page.getByText("₹349").count();
+  out(ctxCard === 1 && fee >= 1, "register keeps event context above the gate", `heading=${ctxCard} fee=${fee}`);
+
+  await page.goto(BASE + "/register?event=free-fire", { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+
+  out(
+    (await page.locator("#reg-auth-gate").isVisible().catch(() => false)) &&
+      (await page.locator("#reg-step-details").isVisible().catch(() => false)) === false,
+    "free event wizard is gated too",
+    ""
+  );
+
+  out(errs.length === 0, "register gate console errors", errs[0] || "none");
   await ctx.close();
 }
 
-/* -------- admin console: dashboard stats, UTR confirm, remove -------- */
+/* -------- operations console: the staff gate, and nothing behind it -------- */
 {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await ctx.newPage();
@@ -375,81 +369,67 @@ for (const vp of VIEWPORTS) {
   page.on("console", (m) => {
     if (m.type() === "error" && !benign(m.text())) errs.push(m.text());
   });
+
+  // The console now lives at /nexus-admin. The old path is a redirect, checked
+  // below, so a stale bookmark lands on the real console instead of a 404.
+  await page.goto(BASE + "/nexus-admin", { waitUntil: "domcontentloaded" });
+  // Waits on the runtime-config fetch and the staff session resolve before the
+  // gate can be decided either way.
+  await page.waitForTimeout(3000);
+
+  const signIn = await page.locator("#admin-signin").isVisible().catch(() => false);
+  out(signIn, "operations console requires staff sign-in", `signin=${signIn}`);
+
+  // The critical one: no roster and no participant data may exist in the DOM
+  // for a visitor with no staff session. This is the regression the original
+  // console would have failed — it rendered a demo roster to anyone.
+  const table = await page.locator("#admin-table-wrap").count();
+  const rows = await page.locator("#admin-table-wrap > li").count();
+  out(
+    table === 0 && rows === 0,
+    "operations console leaks no roster without a staff session",
+    `table=${table} rows=${rows}`
+  );
+
+  // No social login on this page, ever. This is the specific requirement: a
+  // participant's Google session must not be able to reach the roster, and the
+  // only credential form offered here is username + password.
+  const social = await page.getByRole("button", { name: /continue with google/i }).count();
+  out(social === 0, "operations console offers no social login", `googleButtons=${social}`);
+
+  // Bad credentials must be refused by the DATABASE, not merely hidden client
+  // side, and the message is deliberately generic so the form is not a
+  // username-enumeration oracle.
+  await page.fill("#staff-username", `nobody.${Date.now()}`);
+  await page.fill("#staff-password", "definitely-not-the-password");
+  await page.click("#admin-signin-submit");
+  const refused = await page
+    .locator("#admin-signin-error")
+    .waitFor({ state: "visible", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  const msg = refused ? (await page.locator("#admin-signin-error").innerText()).trim() : "";
+  out(
+    refused && /not recognised/i.test(msg),
+    "operations console rejects unknown credentials",
+    msg || "no error surfaced"
+  );
+
+  // A failed attempt must not have left the roster in the DOM behind the form.
+  const tableAfter = await page.locator("#admin-table-wrap").count();
+  out(tableAfter === 0, "roster stays hidden after a failed sign-in", `table=${tableAfter}`);
+
+  // The retired path redirects rather than 404-ing, so an operator with an old
+  // bookmark still reaches the console.
   await page.goto(BASE + "/admin123456789", { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1500);
-
-  const num = async (sel) => Number((await page.locator(sel).innerText()).trim());
-  const total0 = await num("#stat-participants");
-  const colleges = await num("#stat-colleges");
-  const note = await page.locator("#admin-auth-note").count();
+  await page.waitForTimeout(2500);
   out(
-    total0 >= 10 && colleges >= 3 && note === 1,
-    "admin dashboard stats + auth note",
-    `participants=${total0} colleges=${colleges} note=${note}`
+    page.url().includes("/nexus-admin"),
+    "the old console path redirects to /nexus-admin",
+    new URL(page.url()).pathname
   );
 
-  // purchase context: every roster row says which event / which bundle it bought
-  const ev = await num("#stat-events");
-  const bd = await num("#stat-bundles");
-  out(
-    ev > 0 && bd > 0 && ev + bd === total0,
-    "admin purchase breakdown (event vs bundle)",
-    `events=${ev} bundles=${bd} total=${total0}`
-  );
-  const purchaseHeader = await page.getByRole("columnheader", { name: "Purchase" }).count();
-  out(purchaseHeader === 1, "admin roster has a Purchase column", `count=${purchaseHeader}`);
-
-  // sorting beside the search bar — name A–Z must put the alphabetically
-  // first roster name on top, and the control must reset cleanly
-  const rowName = async () =>
-    (await page.locator("#admin-table-wrap tbody tr td").nth(1).innerText())
-      .split("\n")[0]
-      .trim();
-  const names = await page.$$eval(
-    "#admin-table-wrap tbody tr td:nth-child(2)",
-    (cells) => cells.map((c) => c.innerText.split("\n")[0].trim())
-  );
-  const expectedFirst = [...names].sort((a, b) => a.localeCompare(b))[0];
-  await page.selectOption("#admin-sort", "name");
-  await page.waitForTimeout(300);
-  const firstAfter = await rowName();
-  out(
-    names.length === total0 && firstAfter === expectedFirst,
-    "admin sort beside search (name A-Z)",
-    `first "${firstAfter}" expected "${expectedFirst}" rows=${names.length}`
-  );
-  await page.selectOption("#admin-sort", "newest");
-  await page.waitForTimeout(300);
-
-  const confirms = page.locator('button[data-action="confirm"]');
-  const queued = await confirms.count();
-  const verified0 = await num("#stat-verified");
-  if (queued > 0) {
-    await confirms.first().click();
-    await page.waitForTimeout(400);
-    const verified1 = await num("#stat-verified");
-    out(
-      verified1 === verified0 + 1,
-      "admin confirm UTR -> verified",
-      `verified ${verified0} -> ${verified1}`
-    );
-  } else {
-    out(false, "admin confirm UTR -> verified", "no unverified rows in seed");
-  }
-
-  const totalR = await num("#stat-participants");
-  await page.locator('button[data-action="remove"]').first().click();
-  await page.waitForTimeout(250);
-  await page.locator('button[data-action="remove-confirm"]').first().click();
-  await page.waitForTimeout(400);
-  const totalD = await num("#stat-participants");
-  out(
-    totalD === totalR - 1,
-    "admin remove participant (two-step)",
-    `participants ${totalR} -> ${totalD}`
-  );
-
-  out(errs.length === 0, "admin console errors", errs[0] || "none");
+  out(errs.length === 0, "operations console gate console errors", errs[0] || "none");
   await ctx.close();
 }
 

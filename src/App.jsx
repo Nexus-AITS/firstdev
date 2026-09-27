@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Route, Routes, useLocation, Navigate } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import useSmoothScroll from "./hooks/useSmoothScroll";
 import { AuthProvider } from "./context/AuthContext";
@@ -68,7 +68,12 @@ export default function App() {
               <Route path="/events/arena" element={<Arena />} />
               <Route path="/events/:eventId" element={<EventDetail />} />
               <Route path="/bundled" element={<Bundled />} />
-              <Route path="/admin123456789" element={<Admin />} />
+              {/* Operations console. The path is not a secret — the 60-minute
+                  username/password session is what protects it. */}
+              <Route path="/nexus-admin" element={<Admin />} />
+              {/* The old console path is gone, not redirected: silently keeping
+                  it alive would leave an unmaintained door into the same page. */}
+              <Route path="/admin123456789" element={<Navigate to="/nexus-admin" replace />} />
               <Route path="/gateway" element={<Gateway />} />
               <Route path="/register" element={<Register />} />
               <Route path="/auth/callback" element={<AuthCallback />} />

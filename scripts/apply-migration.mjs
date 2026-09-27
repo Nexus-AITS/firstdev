@@ -1,5 +1,5 @@
 /**
- * Apply staged Supabase migrations + seed via the Management API — the same
+ * Apply staged Supabase migrations via the Management API — the same
  * SQL execution the Supabase dashboard SQL editor uses, so no CLI binary or
  * psql is required.
  *
@@ -7,9 +7,13 @@
  * Needs: SUPABASE_ACCESS_TOKEN (personal access token, sbp_…) in .env or the
  *        environment, with access to the project. The anon key CANNOT run DDL.
  *
- * The migration file is idempotent, so re-running is safe. Statements execute
- * as the postgres role, which bypasses the deny-by-default RLS from section 6
- * of the migration; the anon key still sees nothing until policies land.
+ * There is deliberately NO seed step: the database is the source of truth and
+ * holds only real registrations written by signed-in participants. Migration
+ * ...0003 removes the demo rows that an earlier phase had inserted.
+ *
+ * Every migration file is idempotent, so re-running is safe. Statements execute
+ * as the postgres role, which bypasses RLS — the anon / authenticated roles
+ * still see exactly what the policies allow.
  */
 import { readFileSync, readdirSync } from "node:fs";
 
@@ -79,20 +83,34 @@ for (const f of files) {
   await runQuery(readFileSync(new URL(f, migDir), "utf8"), `migration ${f}`);
 }
 
-/* ---------- 2) seed (idempotent: on conflict do nothing) ---------- */
-await runQuery(readFileSync(new URL("../supabase/seed.sql", import.meta.url), "utf8"), "seed supabase/seed.sql");
-
-/* ---------- 3) verify as postgres (bypasses RLS) ---------- */
-// Names purchase_type / purchase_label as well: a project that is missing
-// migration ...000002 fails the SQL itself (runQuery exits 1) instead of having
-// a partial apply reported as success.
+/* ---------- 2) verify as postgres (bypasses RLS) ---------- */
+// Names user_id (migration ...0003) and purchase_type / purchase_label
+// (...0002): a project that is missing either migration fails the SQL itself
+// (runQuery exits 1) instead of having a partial apply reported as success.
 const raw = await runQuery(
   "select count(*)::int as total, " +
-    "coalesce(json_agg(t order by t.created_at), '[]'::json) as rows " +
-    "from (select name, payment_status, created_at, purchase_type, purchase_label " +
+    "coalesce(json_agg(t order by t.created_at desc), '[]'::json) as rows " +
+    "from (select name, payment_status, created_at, purchase_type, purchase_label, " +
+    "             user_id is not null as owned " +
     "      from public.registrations) t;",
   "verify public.registrations"
 );
+
+/* ---------- 2b) verify the admin gate exists ---------- */
+// A green migration that never created public.admin_users would silently lock
+// every operator out of the console, so the table is asserted by name.
+const adminRaw = await runQuery(
+  "select count(*)::int as admins from public.admin_users;",
+  "verify public.admin_users"
+);
+let adminRow = null;
+try {
+  const adminParsed = JSON.parse(adminRaw);
+  const adminRows = Array.isArray(adminParsed) ? adminParsed : (adminParsed.result ?? []);
+  adminRow = adminRows[0] ?? null;
+} catch {
+  adminRow = null;
+}
 
 // Strict verification: a step that cannot prove its own claim must FAIL. The
 // previous version printed "ALL CHECKS PASSED" from the catch block too, so a
@@ -107,10 +125,13 @@ try {
 const rows = parsed ? (Array.isArray(parsed) ? parsed : (parsed.result ?? [])) : [];
 const row = rows[0];
 
-if (typeof row?.total !== "number") {
+if (typeof row?.total !== "number" || typeof adminRow?.admins !== "number") {
   if (parsed) {
     console.error("FAIL: verify response carried no numeric `total` — refusing to report success.");
     console.error(`      ${JSON.stringify(parsed).slice(0, 300)}`);
+  }
+  if (typeof adminRow?.admins !== "number") {
+    console.error("FAIL: public.admin_users is missing or unreadable — the admin console would be locked out.");
   }
   // Set the code and let node unwind by itself: process.exit() called while
   // the fetch connection is still tearing down aborts with 0xC0000409 on
@@ -118,6 +139,16 @@ if (typeof row?.total !== "number") {
   process.exitCode = 1;
 } else {
   console.log(`rows in public.registrations: ${row.total}`);
-  for (const r of row?.rows ?? []) console.log(`  - ${r.name} | ${r.payment_status}`);
-  console.log("ALL CHECKS PASSED — migration + seed applied");
+  for (const r of row?.rows ?? []) {
+    console.log(`  - ${r.name} | ${r.payment_status}${r.owned ? " | owner linked" : " | NO OWNER"}`);
+  }
+  if (row.total === 0) {
+    console.log("  (roster is empty — the database holds only real registrations)");
+  }
+  if (adminRow.admins === 0) {
+    console.log("admins in public.admin_users: 0 — run `npm run db:grant-admin -- <email>` to open the console");
+  } else {
+    console.log(`admins in public.admin_users: ${adminRow.admins}`);
+  }
+  console.log("ALL CHECKS PASSED — migrations applied");
 }

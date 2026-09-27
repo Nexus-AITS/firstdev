@@ -39,45 +39,104 @@ npm run preview  # preview build
 | `/ai`              | Nexus AI                    |
 | `/about`           | About Nexus                 |
 | `/bundled`         | Bundled passes              |
-| `/admin123456789`           | Admin console (unlinked)    |
+| `/nexus-admin`        | Operations console (unlinked) |
 
-## Data model (Supabase — connected)
+## Data model (Supabase — connected, and the source of truth)
 
 The registration schema — **Name, Roll Number, College name, Year, Department,
 Phone Number, Email, UTR number, Payment status** — lives in
-`supabase/migrations/20260926000000_create_registrations.sql`
-(with fake sample rows in `supabase/seed.sql` and full notes in
-`docs/supabase-data-model.md`). It is **applied to the live project** via
-`npm run db:migrate` (Management API + `SUPABASE_ACCESS_TOKEN` in `.env`).
+`supabase/migrations/20260926000000_create_registrations.sql`, with ownership
+and participant access control in `...0003_participant_rls_and_admin_users.sql`
+and the staff system, audit trail and pricing in
+`...0004_staff_roles_audit_and_pricing.sql`. Full notes in
+`docs/supabase-data-model.md`; the phase reports are in `docs/phase-1-report.md`,
+`docs/phase-2-report.md` and `docs/phase-3-report.md`. Applied to the live
+project via `npm run db:migrate` (Management API + `SUPABASE_ACCESS_TOKEN` in
+`.env`).
+
+**There is no local mirror and no seed data.** The database holds only real
+registrations, written by signed-in participants, and the operations console
+reads straight from it.
+
 Payments follow a **UTR verification flow**: the participant submits a UTR
-number (`unverified` → "not verified"), then an admin confirms it
-(`verified`); rejected UTRs can be re-submitted. RLS keeps **reads denied**;
-the only API write path is the narrow anon `INSERT` policy in
-`supabase/migrations/20260926000001_registration_policies.sql`, used by the
-`/register` wizard (dual-write: local store first for `/admin123456789`, then
-best-effort sync to Supabase).
+number (`unverified` → "not verified"), then staff confirm it (`verified`);
+rejected UTRs can be re-submitted by their author.
 
-## Admin console (`/admin123456789`)
+### Two separate identity systems
 
-An operations console at **`/admin123456789`** — deliberately **not linked from the
-navbar or footer**; open the URL directly. It provides:
+This is the part worth reading twice. Participants and staff authenticate
+**completely differently**, and neither can become the other.
 
-- a **clear dashboard** — total participants, distinct colleges that
-  participated, payment-state counts (verified / to review / awaiting
-  UTR / rejected) and **event vs bundle entry counts**;
-- **all participant details** in one table — user id, name, contact, roll
-  number, college, year · department, **purchase** (which event entry or
-  which bundle), **UTR**, submission date and status,
-  with search, status filters and a **sort select beside the search**
-  (newest / oldest, name A–Z, college, status — action first);
-- row actions — **Confirm** (admin confirms the UTR → status flips to
-  `verified` with `payment_verified_at`/`payment_verified_by` audit stamps),
-  **Reject**, and a two-step **Remove** participant.
+|                     | Participant                          | Staff                                    |
+| ------------------- | ------------------------------------ | ---------------------------------------- |
+| Signs in with        | Google OAuth                         | username + password — **no social login** |
+| Database role        | `authenticated`                      | `anon` + `X-Nexus-Staff-Token`           |
+| Lives in             | `auth.users` (Supabase Auth)         | `public.staff_users` / `staff_sessions`  |
+| Session length       | Supabase-managed                     | **60 minutes, hard, server-enforced**   |
 
-It runs on `src/data/registrations.js`, a local mirror of the Supabase schema
-whose functions map 1:1 to future Supabase calls (swap the internals when
-keys land). **Authentication is a planned follow-up pass** — until it ships,
-treat the `/admin123456789` URL as private.
+They share no table, no session and no token. A signed-in participant who opens
+`/nexus-admin` gets the staff login form like anyone else, because the staff code
+never reads the Supabase session.
+
+Credentials are served at runtime by `api/config.js` from `SUPABASE_URL` /
+`SUPABASE_ANON_KEY` — **no `VITE_` prefix**, so the anon key never lands in the
+built bundle.
+
+Access is enforced by **Row Level Security**, not by the pages:
+
+| Role          | Roster                 | Audit log | Staff accounts | Pricing |
+| ------------- | ---------------------- | --------- | -------------- | ------- |
+| `coordinator` | read and search        | —         | —              | read    |
+| `admin`       | read, confirm, reject  | read      | —              | read    |
+| `master`      | + remove, manage staff, set prices | read | create/change | read + write |
+
+A participant can register and correct **only their own** row. They can never
+mark their own payment verified — a trigger refuses it.
+
+Every staff action is recorded in `public.staff_audit_log` with **who, which
+role, what, to which row, and when** — including before/after values. The log is
+append-only and written by database *triggers*, so a client can neither omit an
+entry nor edit one afterwards. It answers "who confirmed this participant, and
+at what time" directly.
+
+Create the first master account with:
+
+```bash
+npm run staff:bootstrap -- nexusadmin "a-long-passphrase" "Full Name"
+```
+
+That path works **only while no staff exist**, then closes permanently; from
+then on a signed-in master adds the other tiers from the console's Staff tab, so
+the addition lands in the audit log.
+
+```bash
+npm run verify:rls     # 30 checks — the participant model
+npm run verify:staff   # 23 checks — staff login, 60-min expiry, 3 tiers, audit
+```
+
+Both run against the live database.
+
+## Operations console (`/nexus-admin`)
+
+An operations console at **`/nexus-admin`** — deliberately **not linked from the
+navbar or footer**; open the URL directly. (`/admin123456789` redirects here so
+an old bookmark still lands in the right place.) Four tabs, gated by role:
+
+- **Roster** — every participant's details with search (name, email, roll number,
+  college, UTR) and a status filter; **Confirm** and **Reject** for `admin` and
+  above, **Remove** for `master` only.
+- **Audit log** — the append-only history described above, filterable by action.
+- **Staff** (master only) — add accounts, change roles, deactivate, and revoke
+  every session for an account.
+- **Pricing** (master only) — edit the bundle and event prices the public site
+  renders, with no rebuild or redeploy.
+
+**Sessions last 60 minutes and expire in the database**, not the browser — the
+token is only a pointer to a session row, so there is nothing client-side to
+extend. The countdown in the header is a courtesy; the server decides.
+
+An unauthenticated visitor sees only the sign-in card: no roster markup, and no
+social login button to press.
 
 ## Registration flow & external links
 
@@ -183,12 +242,34 @@ npm run preview     # keep running on :4173
 npm run verify      # node scripts/verify.mjs (system Chrome, channel: "chrome")
 ```
 
+### Database checks (need `.env` with a `SUPABASE_ACCESS_TOKEN`)
+
+```bash
+npm run db:migrate                  # apply migrations (idempotent, no seed)
+npm run db:ping                     # reachable? is anon denied? how many rows?
+npm run db:query -- "<sql>"         # run read-only SQL as postgres (operator tool)
+npm run verify:rls                  # prove the participant RLS model (30 checks)
+npm run verify:staff                # prove the staff model (23 checks)
+npm run staff:bootstrap -- u "pw"   # create the FIRST master; closes once used
+npm run db:sync-pricing             # seed public.pricing from bundles.js / events.js
+```
+
+`verify:staff` uses `SUPABASE_STAFF_EMAIL` / `SUPABASE_STAFF_PASSWORD` from
+`.env` when present, so it exercises the three tiers as a real master instead of
+bootstrapping a throwaway one. It cleans up every account, session and audit row
+it creates.
+
+`npm test` (== `verify:deploy`) needs no network or credentials and guards the
+deploy shape: SPA fallback, CSP, no `VITE_`-prefixed vars, and the runtime
+config wiring.
+
 It checks all routes × desktop/mobile viewports for console errors and
 horizontal overflow, the ENTER NEXUS transition (normal + reduced-motion),
 realm-portal navigation, the mobile menu, keyboard focus order, that event
 and bundle CTAs route into `/register` (with `/gateway` redirecting there),
-and a full wizard pass — details form → payment QR → UTR submission → success
-screen, including the row landing in the store `/admin123456789` reads.
+the operations-console gate (no roster markup and **no social login button**
+without a staff session), and the full wizard pass — details form → payment QR
+→ UTR submission → success screen.
 
 ---
 

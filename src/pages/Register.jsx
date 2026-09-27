@@ -1,28 +1,40 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import Page from "../components/ui/Page.jsx";
 import Reveal from "../components/ui/Reveal.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
+import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
+import { useAuth } from "../context/AuthContext";
 import { getEventById } from "../data/events.js";
 import { getBundleById } from "../data/bundles.js";
 import {
   addRegistration,
   listRegistrations,
+  submitUtr,
   validateRegistration,
 } from "../data/registrations.js";
-import { submitRegistration } from "../lib/supabase.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
 
 /**
  * Registration wizard — the single place every event (and bundle) registration
- * lands: details → payment QR → UTR reference → confirmation.
+ * lands: identity → details → payment QR → UTR reference → confirmation.
  *
- * Replaces the old /gateway hand-off: /gateway redirects here so old links
- * keep working. Persistence is dual-write — local store first (what the admin console
- * reads), then best-effort into Supabase public.registrations (anon INSERT
- * policy: supabase/migrations/20260926000001_registration_policies.sql).
+ * Replaces the old /gateway hand-off: /gateway redirects here so old links keep
+ * working.
+ *
+ * Google sign-in gates the whole wizard, and it is not a UI nicety: the RLS
+ * INSERT policy in 20260926000003 requires `user_id = auth.uid()`, so an
+ * unsigned visitor's row would be rejected by the database. Failing fast in the
+ * page means the participant is told why instead of watching a form silently
+ * refuse to save. It also gives the row an owner, which is what lets the
+ * participant see their own registration later.
+ *
+ * The database is the ONLY destination. This used to dual-write (localStorage
+ * first, then a best-effort Supabase insert), which could show a success screen
+ * for a registration that never reached the server and an admin console full of
+ * people who never registered. A failed insert is now a failure, and it says so.
  */
 
 const YEARS = ["1st", "2nd", "3rd", "4th"];
@@ -42,10 +54,73 @@ const fieldClass =
 const labelClass =
   "mb-2 block text-[10px] font-medium uppercase tracking-[0.3em] text-lavender/75";
 
+/**
+ * Inline "send a new reference" form for a rejected registration.
+ *
+ * The guard trigger allows this only while the row is not verified, so the
+ * button cannot resurrect a confirmed payment — a rejected UTR is the one state
+ * where the participant is expected to correct their own mistake.
+ */
+function RejectedUtrForm({ onSubmit, rowId }) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    const ok = await onSubmit(value);
+    setBusy(false);
+    if (ok) {
+      setSent(true);
+      setValue("");
+    }
+  }
+
+  if (sent) {
+    return (
+      <p className="text-[10px] uppercase tracking-[0.22em] text-lavender/80">
+        New reference submitted — back with the operations team.
+      </p>
+    );
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-2 flex flex-wrap items-end gap-3">
+      <div className="min-w-[12rem] flex-1">
+        <label className={labelClass} htmlFor={`reg-utr-fix-${rowId}`}>
+          New UTR reference
+        </label>
+        <input
+          id={`reg-utr-fix-${rowId}`}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          className={fieldClass}
+          placeholder="e.g. 402345678912"
+          autoComplete="off"
+        />
+      </div>
+      <button
+        type="submit"
+        data-action="utr-fix"
+        disabled={busy}
+        className="border border-lavender/50 px-4 py-3 text-[9px] font-medium uppercase tracking-[0.24em] text-crystal/80 transition-colors duration-300 hover:border-lavender hover:text-crystal disabled:opacity-50"
+      >
+        {busy ? "Sending…" : "Resubmit"}
+      </button>
+    </form>
+  );
+}
+
 export default function Register() {
   const [searchParams] = useSearchParams();
   const event = getEventById(searchParams.get("event"));
   const bundle = getBundleById(searchParams.get("bundle"));
+  // `status` is three-valued on purpose: while it is "loading" the session is
+  // still resolving and rendering the sign-in wall would be a lie (and a flash
+  // of the wrong state). `signedIn` alone is not enough to decide.
+  const { signedIn, status, configured, configPending } = useAuth();
 
   const fee = event ? (event.payment ?? null) : bundle ? bundle.price : null;
   // payment: 0 is an explicit FREE entry (events.js requires the field), so only
@@ -66,7 +141,13 @@ export default function Register() {
   const [form, setForm] = useState(emptyForm);
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
-  const [done, setDone] = useState(null); // { row, synced }
+  // "saving" guards against a double submit. The insert is not idempotent
+  // (uq_registrations_email rejects a second attempt), so a double-tap would
+  // otherwise surface as a confusing "already registered" error for what was
+  // really one successful registration.
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(null); // the row as stored, with its id
+  const [mine, setMine] = useState([]); // this participant's own registrations
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   const stepIndex = { details: 0, pay: 1, utr: 2, done: paid ? 3 : 2 }[step];
@@ -74,15 +155,24 @@ export default function Register() {
     ? ["YOUR DETAILS", "PAYMENT QR", "PAYMENT REFERENCE"]
     : ["YOUR DETAILS", "CONFIRM"];
 
+  // While the session is still resolving the page must not claim to be either
+  // signed in or signed out — the register/verify suite and a returning
+  // participant both need a stable state to assert against.
+  const authReady = status !== "loading" && !configPending;
+  const gated = authReady && !signedIn;
+
+  /**
+   * Load this participant's own registrations.
+   *
+   * RLS already scopes the select to `user_id = auth.uid()`, so this shows the
+   * signed-in participant their seats and nothing else. It is also the
+   * mechanism that lets them re-submit a UTR the operations team rejected,
+   * which is impossible without an owner on the row.
+   */
+
   function proceedFromDetails(e) {
     e.preventDefault();
-    const dup = listRegistrations().some(
-      (r) =>
-        String(r.email).trim().toLowerCase() === form.email.trim().toLowerCase(),
-    );
-    const message = dup
-      ? "This email is already registered."
-      : validateRegistration({ ...form, utr_number: null });
+    const message = validateRegistration({ ...form, utr_number: null });
     if (message) {
       setError(message);
       return;
@@ -92,22 +182,46 @@ export default function Register() {
     else finalize(null);
   }
 
+  /**
+   * Write the registration.
+   *
+   * There is no local fallback: if the insert fails the participant is told and
+   * stays on the step, because a success screen for a row the server never
+   * accepted is the single worst outcome this flow can produce.
+   */
   async function finalize(utrValue) {
-    const result = addRegistration({
+    if (saving) return;
+    setSaving(true);
+    setError("");
+
+    const { data, error: saveError } = await addRegistration({
       ...form,
       utr_number: utrValue,
       purchase_type: purchase?.type ?? null,
       purchase_label: purchase?.label ?? null,
     });
-    if (result.error) {
-      setError(result.error);
+
+    setSaving(false);
+    if (saveError) {
+      setError(saveError);
       setStep(utrValue != null ? "utr" : "details");
       return;
     }
-    const res = await submitRegistration(result.row);
-    setDone({ row: result.row, synced: res.synced });
-    setError("");
+    setDone(data);
+    setMine((current) => [data, ...current]);
     setStep("done");
+  }
+
+  /** Re-submit a UTR the operations team rejected. */
+  async function resubmitUtr(id, value) {
+    setError("");
+    const { data, error: saveError } = await submitUtr(id, value);
+    if (saveError) {
+      setError(saveError);
+      return false;
+    }
+    setMine((current) => current.map((r) => (r.id === data.id ? data : r)));
+    return true;
   }
 
   function submitUtr(e) {
@@ -115,6 +229,28 @@ export default function Register() {
     setError("");
     finalize(utr.trim());
   }
+
+  // Load the participant's existing registrations once the session is real.
+  // Keyed on `signedIn` so signing in mid-visit (the OAuth redirect returns to
+  // this same URL) fetches without a reload, and signing out clears the list
+  // rather than leaving someone else's seats on screen.
+  useEffect(() => {
+    if (!authReady) return;
+    if (!signedIn) {
+      setMine([]);
+      return;
+    }
+    let alive = true;
+    listRegistrations().then(({ data, error: loadError }) => {
+      if (!alive) return;
+      if (!loadError) setMine(data ?? []);
+    });
+    return () => {
+      alive = false;
+    };
+    // authReady is derived from the same two values and gates the early return;
+    // listing it keeps the intent explicit without adding a second effect.
+  }, [signedIn, authReady]);
 
   const upiUrl = paid
     ? buildUpiUrl({ amount: fee, note: contextTitle || "NEXUS registration" })
@@ -164,10 +300,13 @@ export default function Register() {
             </p>
           </Reveal>
 
-          {/* stepper */}
+          {/* stepper — hidden until the identity is settled, so a signed-out
+              visitor is never shown a progress track they cannot advance */}
           <Reveal delay={0.55}>
             <ol
-              className="mx-auto mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3"
+              className={`mx-auto mt-10 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 ${
+                authReady && !signedIn ? "hidden" : ""
+              }`}
               aria-label="Registration progress"
             >
               {stepList.map((label, i) => (
@@ -224,8 +363,53 @@ export default function Register() {
                 </p>
               ) : null}
 
+              {/* ------------- identity gate (sign in before the form) ------------- */}
+              {/* Rendered INSTEAD of the wizard, not above it. A visible form that
+                  cannot submit teaches the participant nothing about why; a form
+                  replaced by a single sign-in action says it plainly. */}
+              {gated ? (
+                <div id="reg-auth-gate" className="flex flex-col items-center gap-6 py-6 text-center">
+                  <header>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 00</p>
+                    <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
+                      CONFIRM YOUR IDENTITY
+                    </h2>
+                  </header>
+                  <p className="max-w-md text-sm leading-relaxed text-crystal/60">
+                    One tap to continue. Your Google account is what ties this
+                    registration to you — it is how you check whether your payment
+                    was verified, and how a rejected reference gets resubmitted. We
+                    never see your Google password.
+                  </p>
+                  {configured ? (
+                    <GoogleSignIn
+                      label="Sign in to register"
+                      arrow="right"
+                      className="flex flex-col items-center"
+                    />
+                  ) : (
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-crystal/45">
+                      Registration is unavailable — this deployment has no database
+                      connection. Contact the NEXUS team.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              {/* still resolving the session: hold the card rather than
+                  flashing the gate or the form for a single frame */}
+              {!authReady ? (
+                <p
+                  id="reg-auth-pending"
+                  aria-live="polite"
+                  className="py-10 text-center text-[10px] uppercase tracking-[0.4em] text-crystal/40"
+                >
+                  Checking your session…
+                </p>
+              ) : null}
+
               {/* ---------------- step 1: details ---------------- */}
-              {step === "details" ? (
+              {signedIn && step === "details" ? (
                 <form
                   id="reg-step-details"
                   onSubmit={proceedFromDetails}
@@ -293,7 +477,7 @@ export default function Register() {
                 </form>
               ) : null}
               {/* ---------------- step 2: payment QR ---------------- */}
-              {step === "pay" ? (
+              {signedIn && step === "pay" ? (
                 <div id="reg-step-pay" className="flex flex-col gap-6 text-center">
                   <header>
                     <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 02</p>
@@ -360,7 +544,7 @@ export default function Register() {
               ) : null}
 
               {/* ---------------- step 3: UTR reference ---------------- */}
-              {step === "utr" ? (
+              {signedIn && step === "utr" ? (
                 <form id="reg-step-utr" onSubmit={submitUtr} noValidate className="flex flex-col gap-5">
                   <header>
                     <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 03</p>
@@ -407,7 +591,7 @@ export default function Register() {
                 </form>
               ) : null}
               {/* ---------------- done ---------------- */}
-              {step === "done" && done ? (
+              {signedIn && step === "done" && done ? (
                 <div id="reg-success" className="flex flex-col items-center gap-4 text-center">
                   <span
                     aria-hidden
@@ -419,21 +603,18 @@ export default function Register() {
                     REGISTRATION RECEIVED
                   </h2>
                   <p className="max-w-md text-sm leading-relaxed text-crystal/60">
-                    {done.row.name} · {done.row.email} ·{" "}
-                    {done.row.utr_number
-                      ? `UTR ${done.row.utr_number}`
-                      : "no payment due"}
+                    {done.name} · {done.email} ·{" "}
+                    {done.utr_number ? `UTR ${done.utr_number}` : "no payment due"}
                     . Your entry is waiting for admin verification — watch your
                     email for confirmation.
                   </p>
                   <p
                     id="reg-sync"
-                    data-synced={done.synced ? "true" : "false"}
+                    data-synced="true"
+                    data-reference={done.id}
                     className="text-[10px] uppercase tracking-[0.3em] text-crystal/40"
                   >
-                    {done.synced
-                      ? "Saved locally · synced to cloud roster"
-                      : "Saved locally · cloud sync unavailable"}
+                    Saved to the NEXUS roster · reference {String(done.id).slice(0, 8)}
                   </p>
                   <div className="mt-3 flex flex-wrap items-center justify-center gap-4">
                     <CinematicButton to={returnTo}>Back to the event</CinematicButton>
@@ -444,6 +625,58 @@ export default function Register() {
                       Browse more realms
                     </Link>
                   </div>
+                </div>
+              ) : null}
+
+              {/* ------- this participant's existing registrations ------- */}
+              {/* RLS scopes this select to the signed-in user, so it is the
+                  participant's own view and nothing else. It is the only place
+                  the app can show "your payment is verified" or let a rejected
+                  UTR be resubmitted — neither is possible without ownership. */}
+              {signedIn && mine.length > 0 ? (
+                <div id="reg-mine" className="mt-10 border-t border-white/10 pt-8">
+                  <h3 className="text-[10px] font-medium uppercase tracking-[0.4em] text-lavender/70">
+                    Your registrations
+                  </h3>
+                  <ul className="mt-4 flex flex-col gap-3">
+                    {mine.map((r) => (
+                      <li
+                        key={r.id}
+                        className="flex flex-col gap-1.5 border border-white/10 bg-white/[0.02] px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-3">
+                          <span className="text-sm tracking-wide text-crystal/85">
+                            {r.purchase_label ?? "NEXUS registration"}
+                          </span>
+                          <span
+                            className={`text-[9px] font-medium uppercase tracking-[0.22em] ${
+                              r.payment_status === "verified"
+                                ? "text-gold"
+                                : r.payment_status === "rejected"
+                                  ? "text-rose-300/85"
+                                  : "text-crystal/50"
+                            }`}
+                          >
+                            {r.payment_status === "verified"
+                              ? "Payment verified"
+                              : r.payment_status === "rejected"
+                                ? "Reference rejected"
+                                : "Awaiting verification"}
+                          </span>
+                        </div>
+                        <p className="text-[10px] tracking-[0.14em] text-crystal/40">
+                          {r.college_name} · {r.roll_number}
+                          {r.utr_number ? ` · UTR ${r.utr_number}` : ""}
+                        </p>
+                        {r.payment_status === "rejected" ? (
+                          <RejectedUtrForm
+                            rowId={r.id}
+                            onSubmit={(v) => resubmitUtr(r.id, v)}
+                          />
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </div>

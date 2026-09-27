@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
-  createAuthClient,
+  getAuthClient,
   isAuthConfigured,
   getAuthRedirectUrl,
   rememberPostAuthPath,
@@ -62,7 +62,7 @@ export function AuthProvider({ children }) {
           setStatus("signed_out");
           return undefined;
         }
-        return createAuthClient();
+        return getAuthClient();
       })
       .then((supabase) => {
         if (!alive || supabase === undefined) return undefined;
@@ -158,6 +158,50 @@ export function AuthProvider({ children }) {
     if (err) setError(err.message);
   }, [client]);
 
+  /* ---------- operations-console access (email / password) ---------- */
+
+  /**
+   * Sign in with an operations account.
+   *
+   * Deliberately separate from signInWithGoogle: the console is the only
+   * surface that must work without a Google account, because whoever verifies
+   * UTRs is staff, not a participant. Both paths land on the same session —
+   * supabase-js multiplexes providers — so this shares the ONE client and the
+   * ONE onAuthStateChange subscription installed above. A second client here
+   * would fight that subscription over the shared storage key.
+   *
+   * Returns { ok: true } or { ok: false, error } with a message safe to show:
+   * GoTrue distinguishes "no such user" from "wrong password" only by message,
+   * and leaking which one it was would turn this form into an account
+   * enumeration oracle.
+   */
+  const signInWithPassword = useCallback(
+    async (email, password) => {
+      if (!client) {
+        return { ok: false, error: "Sign-in is not configured for this deployment." };
+      }
+      const value = String(email ?? "").trim();
+      if (!value || !password) {
+        return { ok: false, error: "Enter your email and password." };
+      }
+      const { error: err } = await client.auth.signInWithPassword({
+        email: value,
+        password: String(password),
+      });
+      if (err) {
+        return {
+          ok: false,
+          error:
+            err.status === 400 || err.status === 401
+              ? "Those credentials were not recognised."
+              : err.message,
+        };
+      }
+      return { ok: true };
+    },
+    [client]
+  );
+
   const clearError = useCallback(() => setError(null), []);
   const identity = useMemo(() => readIdentity(session?.user), [session]);
 
@@ -177,10 +221,26 @@ export function AuthProvider({ children }) {
       error,
       clearError,
       signInWithGoogle,
+      signInWithPassword,
       signOut,
+      // The shared client, for the few modules that must run a query rather
+      // than read a boolean. Still the same instance the auth listener above
+      // is attached to, so queries carry the live session's access token.
+      client,
       ...identity,
     }),
-    [session, status, configured, error, clearError, signInWithGoogle, signOut, identity]
+    [
+      session,
+      status,
+      configured,
+      error,
+      clearError,
+      signInWithGoogle,
+      signInWithPassword,
+      signOut,
+      client,
+      identity,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

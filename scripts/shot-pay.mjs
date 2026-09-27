@@ -29,29 +29,17 @@ await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
 await page.waitForTimeout(1500);
 await page.screenshot({ path: "artifacts/screenshots/pay-detail-cta.png" });
 
-// register wizard — step 1: details (with fee strip + context)
+// register wizard — step 0: the Google sign-in gate (Phase 2), with the fee
+// strip and event context still visible above it.
 await page.goto("http://localhost:4173/register?event=nexus-breach", {
   waitUntil: "networkidle",
 });
-await page.waitForTimeout(2200);
+await page.waitForTimeout(2600);
 await page.screenshot({ path: "artifacts/screenshots/pay-register-details.png" });
 
-// step 2: payment QR
-await page.fill("#reg-name", "Sample Participant");
-await page.fill("#reg-roll", "24S00A0001");
-await page.fill("#reg-college", "AITS Tirupati");
-await page.selectOption("#reg-year", "2nd");
-await page.fill("#reg-dept", "CSE");
-await page.fill("#reg-phone", "9000000000");
-await page.fill("#reg-email", "sample.participant@example.com");
-await page.click("#reg-details-next");
-await page.waitForTimeout(900);
-await page.screenshot({ path: "artifacts/screenshots/pay-register-qr.png" });
-
-// step 3: UTR field
-await page.click("#reg-pay-next");
-await page.waitForTimeout(700);
-await page.screenshot({ path: "artifacts/screenshots/pay-register-utr.png" });
+// Steps 1-3 need a real Google session, which a screenshot script cannot
+// fabricate. The gate is what an anonymous visitor actually gets, so it is
+// captured instead; the paid steps are covered by the signed-in flow.
 await page.close();
 
 // forge rows with price lines
@@ -90,7 +78,7 @@ await mob.close();
 
 await browser.close();
 console.log(
-  "screenshots saved: pay-detail-meta, pay-detail-cta, pay-register-details, pay-register-qr, pay-register-utr, pay-forge, pay-paradox, pay-detail-mob"
+  "screenshots saved: pay-detail-meta, pay-detail-cta, pay-register-details (sign-in gate), pay-forge, pay-paradox, pay-detail-mob"
 );
 console.log(
   faults.length ? `FAULTS:\n${faults.join("\n")}` : "no console errors / page errors"

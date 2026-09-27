@@ -38,6 +38,48 @@ const AUTH_OPTIONS = {
 };
 
 /**
+ * The one client for the whole app, memoised.
+ *
+ * This must be a SINGLETON. supabase-js persists the session in
+ * localStorage under a fixed key and every instance installs its own auth
+ * listener, so a second client means: its reads carry no access token (RLS
+ * then denies them), and its SIGNED_OUT event fights the real client's
+ * SIGNED_IN. The previous split — an auth client here plus a separate
+ * `persistSession: false` data client in src/lib/supabase.js — is exactly that
+ * bug, and it is why the data layer could never see who was signed in.
+ *
+ * The promise is cached rather than the client so concurrent callers
+ * (AuthProvider on mount, the /register wizard, the admin console) share one
+ * in-flight construction instead of racing to build two.
+ */
+let clientPromise = null;
+
+/**
+ * Resolve the shared client, or null when the deployment is unconfigured.
+ *
+ * The one entry point every non-AuthProvider module uses. Never throws: a
+ * missing /api/config, a blocked chunk or a malformed URL all resolve to null,
+ * which is the "degrade, do not crash" contract every caller already handles.
+ */
+export function getAuthClient() {
+  if (!clientPromise) {
+    // The trailing catch is what handles a failed dynamic import — buildClient
+    // is async, so an inner try around it would never see the rejection.
+    clientPromise = loadRuntimeConfig()
+      .then((config) => (config ? buildClient(config) : null))
+      .catch(() => null);
+  }
+  return clientPromise;
+}
+
+async function buildClient(config) {
+  // Dynamic on purpose: this is the line that keeps supabase-js out of the
+  // blocking entry bundle. Vite splits it into its own async chunk.
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(config.supabaseUrl, config.supabaseAnonKey, { auth: AUTH_OPTIONS });
+}
+
+/**
  * Build the client.
  *
  * supabase-js is ~215 kB, so a static import would drag it into the entry
@@ -46,15 +88,15 @@ const AUTH_OPTIONS = {
  * calls this from its effect: the page paints immediately, the navbar holds a
  * loader diamond, and the client lands a beat later. Returns null when the
  * deployment has no credentials rather than throwing.
+ *
+ * Prefer `getAuthClient()` everywhere; this export exists for the tests and
+ * for a deliberate one-off rebuild after `resetRuntimeConfig()`.
  */
 export async function createAuthClient() {
   const config = await loadRuntimeConfig();
   if (!config) return null;
   try {
-    // Dynamic on purpose: this is the line that keeps supabase-js out of the
-    // blocking entry bundle. Vite splits it into its own async chunk.
-    const { createClient } = await import("@supabase/supabase-js");
-    return createClient(config.supabaseUrl, config.supabaseAnonKey, { auth: AUTH_OPTIONS });
+    return await buildClient(config);
   } catch {
     // Malformed URL, or the chunk failed to resolve. Returned as null so the
     // caller can surface it in the UI — nothing here should throw into render.
@@ -65,9 +107,9 @@ export async function createAuthClient() {
 /**
  * Whether this deployment has a usable identity provider.
  *
- * Async because the credentials now arrive over the network, so a caller can
- * tell "not configured" apart from "not fetched yet" — the old synchronous
- * check could not. AuthContext owns that tri-state (`loading` / `signed_out` /
+ * Async because the credentials arrive over the network, so a caller can tell
+ * "not configured" apart from "not fetched yet" — the old synchronous check
+ * could not. AuthContext owns that tri-state (`loading` / `signed_out` /
  * `signed_in`) so the navbar never flashes a SIGN IN button it must retract.
  */
 export async function isAuthConfigured() {

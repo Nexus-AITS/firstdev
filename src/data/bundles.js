@@ -7,6 +7,7 @@
  */
 import { events, getEventById } from "./events.js";
 import { realms } from "./realms.js";
+import { getPrice, registerFallbackPrice } from "./pricing.js";
 
 const HACKATHON_ID =
   events.find((event) => event.category === "HACKATHON")?.id ?? "nexus-breach";
@@ -117,6 +118,26 @@ export const bundles = bundlesList;
 
 export function getBundleById(id) {
   return bundlesList.find((bundle) => bundle.id === id) ?? null;
+}
+
+// Register the JS prices as fallbacks for the database values. The live price is
+// fetched at runtime from public.pricing (see pricing.js); these are only used
+// when the database has not answered, so a price is never *lost* by moving it
+// into the database — only *changed* from there.
+bundlesList.forEach((bundle) => registerFallbackPrice("bundle", bundle.id, bundle.price));
+
+/**
+ * The price to charge for a bundle right now.
+ *
+ * Prefers the database value and falls back to the JS constant. This is the
+ * function every price-rendering call site should use, so the priority rule
+ * lives in one place instead of being re-implemented per component.
+ */
+export function getBundlePrice(id) {
+  const bundle = getBundleById(id);
+  if (!bundle) return null;
+  const live = getPrice("bundle", id);
+  return live == null ? Number(bundle.price) : live;
 }
 
 /** The events a pick-pool can draw from (hackathon excluded when flagged). */

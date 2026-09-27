@@ -8,9 +8,11 @@ dist-ssr
 npm-debug.log*
 yarn-error.log*
 
-# environment — real keys never belong in the repo. The VITE_ anon key is
-# public by design (it is only as powerful as the RLS policies behind it),
-# but a .env can also hold values that are not, so the whole family is ignored.
+# environment — real keys never belong in the repo. SUPABASE_ANON_KEY is
+# public by design (it is only as powerful as the RLS policies behind it) and
+# is served at runtime by api/config.js rather than inlined, but a .env also
+# holds SUPABASE_ACCESS_TOKEN (a PAT that can run DDL), so the whole family is
+# ignored.
 .env
 .env.*
 !.env.example
@@ -21,4 +23,6 @@ supabase/.branches/
 
 # local verification artifacts (screenshots, logs)
 artifacts/
+preview.log
+preview.err
 

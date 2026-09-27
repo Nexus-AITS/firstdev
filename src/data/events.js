@@ -7,7 +7,13 @@
  * field: consumers guard on `event.payment != null`, so a missing value reads
  * as "fee unknown" and hides the price line instead of saying FREE.
  * maxSize = team cap ("individual" = solo entry).
+ *
+ * The `payment` below is a FALLBACK. The live entry fee comes from
+ * public.pricing at runtime (see pricing.js / getEventFee), so changing a fee is
+ * a console action rather than a code change and redeploy.
  */
+import { getPrice, registerFallbackPrice } from "./pricing.js";
+
 export const events = [
   /* ------------------------- NEXUS REBUILDERS ------------------------- */
   {
@@ -273,6 +279,32 @@ export function formatMaxSize(maxSize) {
 export function formatFee(payment) {
   if (payment == null || payment === "") return "—";
   return Number(payment) > 0 ? `₹${payment}` : "FREE";
+}
+
+// Register the JS fees as fallbacks for the database prices (see pricing.js).
+// The live value comes from public.pricing at runtime, so changing an event fee
+// is a console action rather than a code change.
+events.forEach((event) => {
+  if (event.payment != null && event.payment !== "") {
+    registerFallbackPrice("event", event.id, event.payment);
+  }
+});
+
+/**
+ * The live fee for an event, preferring the database over the JS constant.
+ * Returns null when the event declares no fee at all, which formatFee renders
+ * as "—" (a data gap) rather than "FREE".
+ */
+export function getEventFee(id) {
+  const event = getEventById(id);
+  if (!event || event.payment == null || event.payment === "") return null;
+  const live = getPrice("event", id);
+  return live == null ? event.payment : live;
+}
+
+/** formatFee, but DB-first. The call sites that render a live price use this. */
+export function formatEventFee(id) {
+  return formatFee(getEventFee(id));
 }
 
 export default events;
