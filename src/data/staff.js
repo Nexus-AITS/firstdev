@@ -141,6 +141,21 @@ async function rpc(name, params, staffToken) {
   return { ok: res.ok, body: res.data, status: res.status };
 }
 
+/**
+ * The shared client, for the handful of calls that run as the PARTICIPANT.
+ *
+ * Kept separate from staffFetch on purpose. staffFetch sends the anon key and an
+ * X-Nexus-Staff-Token header; the participant's identity comes from the Supabase
+ * Auth session, which the client attaches on its own. A call that needs the
+ * participant therefore has to go through the SDK rather than raw fetch, or the
+ * database sees an anonymous caller and refuses it.
+ */
+async function participantClient() {
+  const supabase = await getAuthClient();
+  if (!supabase) return { error: "The NEXUS database is not reachable from this deployment." };
+  return { supabase };
+}
+
 
 /* ---------- the session API ---------- */
 
@@ -292,30 +307,75 @@ export function normalizePage({ page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
 
 export async function staffListRegistrations(token, options = {}) {
   const { page, pageSize } = normalizePage(options);
-  const { query, status } = options;
+  const { query, status, event, fromDate, toDate } = options;
   const term = String(query ?? "").trim();
 
   const filters = {};
   if (status && status !== "all") filters.payment_status = `eq.${status}`;
-  // `or=(name.ilike."%term%",...)` — the search the operator typed, pushed down
-  // to Postgres so it is scoped to the whole table instead of one loaded page.
-  // Filtering the loaded rows in the browser instead would report "no match"
-  // for every participant who is not on the page currently on screen.
-  if (term) {
-    const like = `%${term}%`;
-    filters.or = `(name.ilike.${q(like)},email.ilike.${q(like)},roll_number.ilike.${q(like)},college_name.ilike.${q(like)},utr_number.ilike.${q(like)})`;
+
+  /* The event filter is a real JOIN, not a LIKE on the free-text
+     purchase_label. The label is prose the browser wrote, and matching on prose
+     is how a filter starts lying about who is in a room: bundle #01 and #02
+     both contain NEXUS BREACH, so a text search would return everyone who
+     bought either.
+
+     `!inner` in the select below is what makes the JOIN drop non-matching
+     parents; filtering on `registration_events.event_id` is what makes it
+     selective. A plain (left) embed would filter the CHILD and still return
+     every parent with a null child array — i.e. the whole roster, unchanged. */
+  if (event && event !== "all") {
+    filters["registration_events.event_id"] = `eq.${event}`;
   }
 
-  const res = await staffFetch(
-    `registrations?${qs("*", "created_at.desc", filters)}`,
-    {
-      staffToken: token,
-      headers: {
-        Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
-        Prefer: "count=exact",
-      },
-    }
-  );
+  /* Day boundaries, in Asia/Kolkata, because that is the event's own timezone.
+     A UTC `created_at=gte` would cut the day at 05:30 IST and quietly drop
+     everyone who registered between midnight and half past five — which is
+     exactly the row someone is chasing at 9am. `<input type="date">` gives
+     YYYY-MM-DD, so the offset is appended here rather than in the view.
+
+     The two bounds go into ONE `and=(...)` group. They cannot be two separate
+     `created_at` params: URLSearchParams.set on the same key overwrites, so the
+     second bound would silently replace the first and the range would collapse
+     to a single instant. */
+  const range = [];
+  if (fromDate) range.push(`created_at.gte.${fromDate}T00:00:00+05:30`);
+  // `to` is INCLUSIVE, so the last day needs its own end-of-day bound. An `lte`
+  // on a midnight timestamp would include almost nothing from that day.
+  if (toDate) range.push(`created_at.lte.${toDate}T23:59:59.999+05:30`);
+
+  /* The search is a separate top-level `or=(...)`, NOT another entry in `range`.
+
+     This is the subtle one. PostgREST ANDs separate top-level params, but a
+     single `or=(a,b)` is a disjunction. Folding the search into the same group
+     as the date bounds would make the filter read "in range OR name matches" —
+     so searching a date window would return every matching participant from
+     every other day, which looks like a working filter while quietly ignoring
+     the dates entirely. Kept apart, each is its own predicate and the two
+     intersect. */
+  if (term) {
+    const like = `%${term}%`;
+    // `or=(name.ilike."%term%",...)` — the search the operator typed, pushed down
+    // to Postgres so it is scoped to the whole table instead of one loaded page.
+    // Filtering the loaded rows in the browser instead would report "no match"
+    // for every participant who is not on the page currently on screen.
+    filters.or = `(name.ilike.${q(like)},email.ilike.${q(like)},roll_number.ilike.${q(
+      like
+    )},college_name.ilike.${q(like)},utr_number.ilike.${q(like)})`;
+  }
+  if (range.length) filters.and = `(${range.join(",")})`;
+
+  /* `registration_events(...)` is only needed to filter; selecting the embedded
+     rows as well would multiply the response for no benefit, since the roster
+     card reads the event names from `purchase_label`. */
+  const select = event && event !== "all" ? "*,registration_events!inner(event_id)" : "*";
+
+  const res = await staffFetch(`registrations?${qs(select, "created_at.desc", filters)}`, {
+    staffToken: token,
+    headers: {
+      Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
+      Prefer: "count=exact",
+    },
+  });
   return paged(res, { page, pageSize });
 }
 
@@ -421,6 +481,129 @@ export async function staffUpdate({ userId, isActive, role, fullName, newPasswor
 
 export async function staffRevokeSessions(userId, token) {
   return rpc("staff_revoke_sessions", { p_user_id: userId }, token);
+}
+
+/* ---------- the filtered export ---------- */
+
+/**
+ * Read the roster for export, filtered.
+ *
+ * Deliberately NOT the paged list. The console reads 25 rows at a time, so
+ * exporting from that response would produce a 25-row file no matter how many
+ * people were registered, and the operator would reconcile a payment sheet
+ * against a fraction of the truth. This calls the one function that filters and
+ * numbers the WHOLE set server-side.
+ *
+ * The dates are plain calendar dates, not timestamps: the function converts them
+ * to Asia/Kolkata day windows itself. A browser sending `new Date().toISOString()`
+ * would hand Postgres a UTC instant and silently cut the day at 05:30 IST.
+ */
+export async function staffExportRegistrations(token, options = {}) {
+  const { fromDate = null, toDate = null, event = null, status = null } = options;
+  const body = {
+    p_from_date: fromDate || null,
+    p_to_date: toDate || null,
+    p_event: event || null,
+    p_status: status || null,
+  };
+  const res = await rpc("staff_export_registrations", body, token);
+  if (!res.ok) {
+    return { ok: false, rows: [], error: res.body?.message ?? "The export failed." };
+  }
+  return { ok: true, rows: Array.isArray(res.body) ? res.body : [], error: null };
+}
+
+/* ---------- catalogue CRUD (master only; the DB enforces it too) ---------- */
+
+/** Create or replace an event. */
+export async function staffUpsertEvent(event, token) {
+  return rpc("staff_upsert_event", { p_event: event }, token);
+}
+
+/** Create or replace a bundle, include lines and all, in one call. */
+export async function staffUpsertBundle(bundle, token) {
+  return rpc("staff_upsert_bundle", { p_bundle: bundle }, token);
+}
+
+/** Take a bundle off the public site. History is kept, nothing is deleted. */
+export async function staffRetireBundle(id, token) {
+  return rpc("staff_retire_bundle", { p_bundle_id: id }, token);
+}
+
+/** Take an event off the public site. Refused while a live bundle seats it. */
+export async function staffRetireEvent(id, token) {
+  return rpc("staff_retire_event", { p_event_id: id }, token);
+}
+
+/* ---------- event selection ---------- */
+
+/**
+ * Save a participant's event selection.
+ *
+ * Runs as the PARTICIPANT, not as staff, so it deliberately does not go through
+ * staffFetch: this is the one request in the app that carries a Supabase Auth
+ * session instead of the staff token, and the database grants it to
+ * `authenticated` only. Routing it through the staff transport would send the
+ * wrong identity and the call would be refused.
+ *
+ * The browser sends ids only. The amount in the response is computed by the
+ * database from public.pricing and must be displayed, never computed locally.
+ */
+export async function setRegistrationEvents({ registrationId, bundleId = null, eventIds = [] }) {
+  const { supabase, error } = await participantClient();
+  if (error) return { ok: false, error };
+
+  const { data, error: callError } = await supabase.rpc("registration_set_events", {
+    p_registration_id: registrationId,
+    p_bundle_id: bundleId,
+    p_event_ids: eventIds,
+  });
+
+  if (callError) return { ok: false, error: explainSelectionError(callError) };
+
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    ok: true,
+    amount: row?.amount ?? null,
+    currency: row?.currency ?? "INR",
+    error: null,
+  };
+}
+
+/**
+ * Turn a bundle-rule rejection into something a participant can act on.
+ *
+ * The database raises 22023 with a sentence written for a human, so it is passed
+ * through rather than replaced. Everything else gets a generic message: a raw
+ * constraint name or column list is noise to a participant and a small amount of
+ * schema information to anyone probing the endpoint.
+ */
+function explainSelectionError(error) {
+  const message = String(error?.message ?? "");
+  if (error?.code === "22023" || /exactly|does not include|cannot be chosen twice|not in your selection/i.test(message)) {
+    return message.replace(/^.*?:\s*/, "") || "That selection is not valid for this bundle.";
+  }
+  if (error?.code === "42501" || /already confirmed|not yours|Sign in/i.test(message)) {
+    return message.replace(/^.*?:\s*/, "") || "This selection can no longer be changed.";
+  }
+  return "That selection could not be saved. Please try again.";
+}
+
+/** Read the public catalogue (events + bundles + include lines) in one call. */
+export async function loadPublicCatalogue() {
+  const res = await rpc("public_catalogue", {}, null);
+  if (!res.ok || !res.body) return { ok: false, error: "The catalogue is unavailable." };
+  return { ok: true, events: res.body.events ?? [], bundles: res.body.bundles ?? [] };
+}
+
+/** Ask the database which selections a bundle would accept. Used by tests. */
+export async function bundleSelectionErrors(bundleId, eventIds, token = null) {
+  const res = await rpc(
+    "bundle_selection_errors",
+    { p_bundle_id: bundleId, p_event_ids: eventIds },
+    token
+  );
+  return Array.isArray(res.body) ? res.body : [];
 }
 
 /** Upsert a price. The DB trigger records who changed it and when.
