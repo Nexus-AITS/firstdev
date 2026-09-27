@@ -131,6 +131,26 @@ an old bookmark still lands in the right place.) Four tabs, gated by role:
 - **Pricing** (master only) — edit the bundle and event prices the public site
   renders, with no rebuild or redeploy.
 
+Every tab pages and refreshes on demand, and both are enforced by the database
+rather than the browser. Each list is read one window at a time with an exact
+count, and **search and filter run in SQL**, so a search finds a participant who
+is not on the page you happen to be looking at — filtering the loaded rows in
+the browser would report "no match" for anyone on another page. Search is
+debounced, so typing does not fire a request per keystroke. Each tab loads only
+when it is opened, and an action refreshes only the tab it changed, rather than
+re-reading all four tables on every click.
+
+**Refresh** is a button, not a timer. The roster is shared by several operators,
+and a poll would re-query the database forever on a screen nobody may be
+watching. One explicit read, on demand.
+
+The pricing tab is deliberately *not* split across pages: it maps database rows
+onto the fixed `bundles.js` / `events.js` catalogue with `find`, so a price on a
+later page would render as "not set in the database yet" and an operator would
+"correct" it by re-saving the compiled-in number. The catalogue is bounded by the
+site's own content, so it is read in one window, and the tab refuses to edit
+rather than mislead if it ever outgrows that.
+
 **Sessions last 60 minutes and expire in the database**, not the browser — the
 token is only a pointer to a session row, so there is nothing client-side to
 extend. The countdown in the header is a courtesy; the server decides.
@@ -249,9 +269,11 @@ npm run db:migrate                  # apply migrations (idempotent, no seed)
 npm run db:ping                     # reachable? is anon denied? how many rows?
 npm run db:query -- "<sql>"         # run read-only SQL as postgres (operator tool)
 npm run verify:rls                  # prove the participant RLS model (30 checks)
-npm run verify:staff                # prove the staff model (23 checks)
+npm run verify:staff                # prove the staff model (25 checks)
 npm run verify:staff-ui             # drive staff CRUD in the real console UI (23 checks)
 npm run verify:pricing              # prove a price edit reaches the public site (6 checks)
+npm run verify:pagination           # prove the console pages and filters in the DB (24 checks)
+npm run verify:rls-hoist            # prove the RLS hoist changed no policy (12 checks)
 npm run staff:bootstrap -- u "pw"   # create the FIRST master; closes once used
 npm run db:sync-pricing             # seed public.pricing from bundles.js / events.js
 ```
@@ -261,13 +283,28 @@ npm run db:sync-pricing             # seed public.pricing from bundles.js / even
 bootstrapping a throwaway one. It cleans up every account, session and audit row
 it creates.
 
-`verify:staff-ui` and `verify:pricing` both need `npm run preview` running on
-`:4173`, and both clean up after themselves — the first removes the probe
-accounts it creates, the second restores the price it moved. They exist because
-the two features they cover shipped broken while every other test passed:
+It also skips one check when driving a **real** account: the last-master guard
+proves itself by asking the database to deactivate a master, which is only a
+refusal while that master really is the last one. Once a second master exists
+the database is right to allow it, and the probe would take the operator's own
+login down with it. The destructive probe only runs when the test bootstrapped a
+throwaway master of its own.
+
+`verify:staff-ui`, `verify:pricing` and `verify:pagination` all need
+`npm run preview` running on `:4173`, and all clean up after themselves — the
+first removes the probe accounts it creates, the second restores the price it
+moved, the third deletes the registrations it seeds. They exist because
+the features they cover shipped broken while every other test passed:
 `StaffTab` never rendered its own "add account" form, and no public component
 ever read a price from the database. Each of those bugs sat behind a test suite
 that asserted against the same stale constants the UI was rendering.
+
+`verify:rls-hoist` is the exception: it needs no browser, and it is not a no-op.
+It snapshots every staff RLS policy, applies the migration for real, and
+compares name, table, **command**, roles, `USING` and `WITH CHECK` field by
+field. Wrapping a security predicate is exactly the kind of edit that is meant
+to be obviously safe and is not, so the comparison — and an explicit check that
+nothing was widened to `ALL` — is the actual deliverable.
 
 `npm test` (== `verify:deploy`) needs no network or credentials and guards the
 deploy shape: SPA fallback, CSP, no `VITE_`-prefixed vars, and the runtime

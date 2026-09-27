@@ -17,6 +17,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  MAX_PAGE_SIZE,
+  PAGE_SIZES,
   ROLE_META,
   can,
   staffCreate,
@@ -45,6 +47,72 @@ const TABS = [
   { id: "staff", label: "Staff", action: "manage_staff" },
   { id: "pricing", label: "Pricing", action: "edit_pricing" },
 ];
+
+/**
+ * Delay a fast-changing value so it settles.
+ *
+ * Search boxes need this now that the query runs in the database: without a
+ * debounce, every keystroke is a PostgREST request against a growing table —
+ * the exact load problem paging was added to solve. The input still updates
+ * immediately, so typing stays responsive; only the fetch waits.
+ */
+function useDebounced(value, delay = 300) {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setSettled(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return settled;
+}
+
+/**
+ * Which list call backs each tab, the state key it writes into, and the grant
+ * that gates it.
+ *
+ * Module scope on purpose: this is a static routing table, and rebuilding it per
+ * render would give `reload` a new dependency on every render, which would make
+ * the load-on-tab-change effect fire in a loop.
+ */
+const LIST_BY_TAB = {
+  roster: { key: "registrations", action: "read", run: staffListRegistrations, label: "roster" },
+  audit: { key: "audit", action: "view_audit", run: staffListAudit, label: "audit" },
+  staff: { key: "staff", action: "manage_staff", run: staffListStaff, label: "staff" },
+  pricing: { key: "pricing", action: "edit_pricing", run: staffListPricing, label: "pricing" },
+};
+
+/** The state shape a tab has before it has ever loaded. `total: null` is
+ *  meaningful: the count is unknown, not zero, so the pager shows "loaded"
+ *  rather than inventing a page count. */
+const EMPTY_WINDOW = { data: [], total: null, page: 1, pageCount: 1, error: null };
+
+/** The default window for each tab. 25 rows is a screenful of the console's
+ *  roomy cards; the audit log is denser but shares the same default so the
+ *  control behaves identically everywhere.
+ *
+ *  Pricing is the exception and the reason is structural, not laziness: that tab
+ *  maps database rows onto a fixed JS catalogue with `find`, so a price on
+ *  page 2 would render as "not set in the database yet" and an operator would
+ *  "correct" it by re-saving the compiled-in number. The catalogue is bounded by
+ *  the site's own content (19 rows today), so it is read in one window — paged,
+ *  counted, and refreshable, but not split. PricingTab refuses to edit if it
+ *  ever outgrows MAX_PAGE_SIZE. */
+const DEFAULT_PAGING = {
+  registrations: { page: 1, pageSize: 25, query: "", status: "all" },
+  audit: { page: 1, pageSize: 25, action: "all" },
+  staff: { page: 1, pageSize: 25 },
+  pricing: { page: 1, pageSize: MAX_PAGE_SIZE },
+};
+
+/** Merge a partial window change for one tab, leaving the others untouched.
+ *  Changing a page or a page size returns to page 1: keeping the old page
+ *  number after narrowing a filter would show an empty screen and look broken. */
+function mergePaging(state, key, patch) {
+  const resets = "page" in patch && patch.page !== 1;
+  return {
+    ...state,
+    [key]: { ...state[key], ...patch, ...(resets ? { page: 1 } : {}) },
+  };
+}
 
 /* ============================== login ============================== */
 
@@ -215,25 +283,147 @@ function ActionButton({ label, onClick, disabled, danger = false }) {
   );
 }
 
+/**
+ * The row-paging + refresh control shared by every data tab.
+ *
+ * Two separate jobs that belong in one place:
+ *
+ *   Refresh is how an operator picks up a change made by someone else (a peer
+ *   confirms a payment, a master edits a price). Auto-refresh on a timer was
+ *   rejected deliberately: the roster is an append-only table that several
+ *   operators share, and a poll would re-query the database forever on a screen
+ *   nobody is necessarily looking at. One explicit read, on demand.
+ *
+ *   Paging is what keeps that read small. The database is asked for one window
+ *   at a time with an exact count, so the page stays fast as the table grows
+ *   and the operator is told the true total rather than being handed a silently
+ *   truncated first screen.
+ *
+ * `busy` dims everything while a fetch is in flight so a double-click cannot
+ * fire two overlapping reads.
+ */
+function Pager({ page, pageSize, pageCount, total, busy, onPage, onPageSize, label }) {
+  const first = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const last = Math.min(page * pageSize, total ?? 0);
+  const canPrev = page > 1;
+  const canNext = total != null && page < pageCount;
+  // Numbered jump links, windowed around the current page so the control stays
+  // a fixed size whether the table has 3 rows or 3,000. Named `pages` rather
+  // than `window` to avoid shadowing the global the page itself depends on.
+  const pages = [];
+  for (let p = Math.max(1, page - 2); p <= Math.min(pageCount, page + 2); p += 1) {
+    pages.push(p);
+  }
+
+  return (
+    <div className="mt-4 flex flex-wrap items-center gap-3 border border-line bg-void-raised px-3 py-2">
+      <button
+        type="button"
+        id={`${label}-refresh`}
+        onClick={() => onPage(page)}
+        disabled={busy}
+        className="border border-line px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.2em] text-ash transition hover:border-violet-bright/60 hover:text-violet-bright disabled:opacity-40"
+      >
+        {busy ? "Refreshing…" : "Refresh"}
+      </button>
+
+      <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-ash" aria-live="polite">
+        {total == null
+          ? `${last} loaded`
+          : `${first}–${last} of ${total}`}
+      </p>
+
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => onPage(page - 1)}
+          disabled={!canPrev || busy}
+          aria-label="Previous page"
+          className="border border-line px-2 py-1 font-mono text-[11px] text-ash transition hover:text-bone disabled:opacity-30"
+        >
+          Prev
+        </button>
+        {pages.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onPage(p)}
+            disabled={busy}
+            aria-current={p === page ? "page" : undefined}
+            className={`border px-2 py-1 font-mono text-[11px] transition disabled:opacity-40 ${
+              p === page
+                ? "border-violet-bright bg-violet/20 text-violet-bright"
+                : "border-line text-ash hover:text-bone"
+            }`}
+          >
+            {p}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => onPage(page + 1)}
+          disabled={!canNext || busy}
+          aria-label="Next page"
+          className="border border-line px-2 py-1 font-mono text-[11px] text-ash transition hover:text-bone disabled:opacity-30"
+        >
+          Next
+        </button>
+      </div>
+
+      <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ash">
+        Rows
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSize(Number(e.target.value))}
+          disabled={busy}
+          className="border border-line bg-void-raised px-2 py-1 font-mono text-[11px] text-bone outline-none focus:border-violet-bright"
+        >
+          {PAGE_SIZES.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
 /* ============================== roster ============================== */
 
-function RosterTab({ session, rows, reload }) {
+function RosterTab({
+  session,
+  window: win,
+  paging,
+  busy,
+  reload,
+  setPage,
+  setPageSize,
+  setFilter,
+}) {
   const role = session.role;
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("all");
   const [notice, setNotice] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
-      if (status !== "all" && r.payment_status !== status) return false;
-      if (!q) return true;
-      return [r.name, r.email, r.roll_number, r.college_name, r.utr_number]
-        .filter(Boolean)
-        .some((field) => String(field).toLowerCase().includes(q));
-    });
-  }, [rows, query, status]);
+  /* The text box is the operator's own state; the query it triggers belongs to
+     the database. Debounced so a fast typist makes one request, not one per
+     keystroke. */
+  const [term, setTerm] = useState(paging.query);
+  const debouncedTerm = useDebounced(term, 300);
+  useEffect(() => {
+    if (debouncedTerm !== paging.query) setFilter({ query: debouncedTerm });
+    // Only the settled term should drive this; including `paging` would make
+    // the effect re-fire when its own setFilter lands.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedTerm]);
+
+  /* If the filter is cleared from elsewhere (the reset button), follow it. */
+  useEffect(() => {
+    if (paging.query === "" && term !== "") setTerm("");
+  }, [paging.query, term]);
+
+  const rows = win.data;
+  const filtering = paging.query.trim() !== "" || paging.status !== "all";
 
   async function act(id, run, message) {
     setBusyId(id);
@@ -263,8 +453,8 @@ function RosterTab({ session, rows, reload }) {
             id="roster-search"
             type="search"
             placeholder="Name, email, roll number, college, or UTR"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
             className="mt-2 w-full border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
           />
         </div>
@@ -274,8 +464,8 @@ function RosterTab({ session, rows, reload }) {
           </label>
           <select
             id="roster-status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            value={paging.status}
+            onChange={(e) => setFilter({ status: e.target.value })}
             className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
           >
             <option value="all">All</option>
@@ -288,10 +478,14 @@ function RosterTab({ session, rows, reload }) {
       </div>
 
       <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash">
-        {filtered.length} of {rows.length} registrations
+        {filtering
+          ? `${win.total ?? rows.length} matching registration${win.total === 1 ? "" : "s"}`
+          : "Newest first"}
       </p>
 
       {notice ? <div className="mt-3"><Banner kind={notice.kind}>{notice.text}</Banner></div> : null}
+
+      {win.error ? <div className="mt-3"><Banner>Could not load the roster. Try refreshing.</Banner></div> : null}
 
       {readOnly ? (
         <p className="mt-4 border border-line bg-void-raised px-3 py-2 text-sm text-ash">
@@ -300,10 +494,21 @@ function RosterTab({ session, rows, reload }) {
         </p>
       ) : null}
 
+      <Pager
+        label="roster"
+        page={win.page}
+        pageSize={paging.pageSize}
+        pageCount={win.pageCount}
+        total={win.total}
+        busy={busy}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
+
       {/* id="admin-table-wrap" is the anchor scripts/verify.mjs asserts on to
           prove the roster is absent for anyone without a staff session. */}
       <ul id="admin-table-wrap" className="mt-5 space-y-3">
-        {filtered.map((r) => (
+        {rows.map((r) => (
           <li key={r.id} className="border border-line bg-void-raised p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -380,9 +585,13 @@ function RosterTab({ session, rows, reload }) {
             ) : null}
           </li>
         ))}
-        {filtered.length === 0 ? (
+        {rows.length === 0 ? (
           <li className="border border-line bg-void-raised px-4 py-6 text-center text-sm text-ash">
-            No registrations match that search.
+            {busy
+              ? "Loading…"
+              : filtering
+                ? "No registrations match that search."
+                : "No registrations yet."}
           </li>
         ) : null}
       </ul>
@@ -413,13 +622,8 @@ const ACTION_LABELS = {
  * and written by database triggers. Nothing on this page can edit or delete an
  * entry, so the record cannot be tidied up after the fact.
  */
-function AuditTab({ rows }) {
-  const [filter, setFilter] = useState("all");
-
-  const shown = useMemo(
-    () => (filter === "all" ? rows : rows.filter((r) => r.action === filter)),
-    [rows, filter]
-  );
+function AuditTab({ window: win, paging, busy, setPage, setPageSize, setFilter }) {
+  const rows = win.data;
 
   return (
     <section>
@@ -429,8 +633,8 @@ function AuditTab({ rows }) {
         </label>
         <select
           id="audit-filter"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
+          value={paging.action}
+          onChange={(e) => setFilter({ action: e.target.value })}
           className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
         >
           <option value="all">Everything</option>
@@ -443,11 +647,24 @@ function AuditTab({ rows }) {
       </div>
 
       <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash">
-        {shown.length} entries · newest first · append-only, nothing here can be edited or deleted
+        Newest first · append-only, nothing here can be edited or deleted
       </p>
 
+      {win.error ? <div className="mt-3"><Banner>Could not load the audit log. Try refreshing.</Banner></div> : null}
+
+      <Pager
+        label="audit"
+        page={win.page}
+        pageSize={paging.pageSize}
+        pageCount={win.pageCount}
+        total={win.total}
+        busy={busy}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
+
       <ol className="mt-5 space-y-2">
-        {shown.map((entry) => (
+        {rows.map((entry) => (
           <li key={entry.id} className="border border-line bg-void-raised px-4 py-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p className="font-mono text-sm text-bone">
@@ -469,9 +686,9 @@ function AuditTab({ rows }) {
             ) : null}
           </li>
         ))}
-        {shown.length === 0 ? (
+        {rows.length === 0 ? (
           <li className="border border-line bg-void-raised px-4 py-6 text-center text-sm text-ash">
-            No matching entries yet.
+            {busy ? "Loading…" : "No matching entries yet."}
           </li>
         ) : null}
       </ol>
@@ -521,7 +738,18 @@ function Field({ label, id, hint, children }) {
  * intact. The database refuses to deactivate or demote the last active master,
  * so this panel cannot lock everyone out.
  */
-function StaffTab({ session, rows, reload }) {
+function StaffTab({
+  session,
+  window: win,
+  paging,
+  busy: listBusy,
+  reload,
+  setPage,
+  setPageSize,
+}) {
+  /* `busy` below is the form's own submitting flag; the list's in-flight flag
+     arrives as `listBusy` so the two never shadow each other. */
+  const rows = win.data;
   const [form, setForm] = useState({ username: "", fullName: "", password: "", role: "coordinator" });
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -688,8 +916,22 @@ function StaffTab({ session, rows, reload }) {
       </form>
 
       <h2 className="mt-8 font-mono text-[11px] uppercase tracking-[0.35em] text-ash">
-        Current accounts ({rows.length})
+        Current accounts
       </h2>
+
+      {win.error ? <div className="mt-3"><Banner>Could not load staff accounts. Try refreshing.</Banner></div> : null}
+
+      <Pager
+        label="staff"
+        page={win.page}
+        pageSize={paging.pageSize}
+        pageCount={win.pageCount}
+        total={win.total}
+        busy={listBusy}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
+
       <ul className="mt-3 space-y-2">
         {rows.map((u) => (
           <li key={u.id} className="border border-line bg-void-raised px-4 py-3">
@@ -805,7 +1047,18 @@ function StaffTab({ session, rows, reload }) {
  * change in the audit log with the operator's identity — so "who raised this
  * price and when" has an answer.
  */
-function PricingTab({ session, rows, reload }) {
+function PricingTab({
+  session,
+  window: win,
+  paging,
+  busy: listBusy,
+  reload,
+  setPage,
+  setPageSize,
+}) {
+  /* `busy` below is the per-row save flag; the list's in-flight flag arrives as
+     `listBusy` so the two never shadow each other. */
+  const rows = win.data;
   const [drafts, setDrafts] = useState({});
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -856,6 +1109,18 @@ function PricingTab({ session, rows, reload }) {
     { kind: "event", title: "Events" },
   ];
 
+  if (rows.length > MAX_PAGE_SIZE) {
+    // A catalogue longer than one window means `liveFor` cannot see every price,
+    // and the console would start reporting real database prices as "not set in
+    // the database yet". Refuse to edit rather than mislead the operator.
+    return (
+      <p className="border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
+        {rows.length} priced items exceeds the {MAX_PAGE_SIZE}-row window this editor loads at
+        once. Raise MAX_PAGE_SIZE before editing prices, or the console would report real
+        database prices as missing.
+      </p>
+    );
+  }
   return (
     <section>
       <p className="text-sm leading-relaxed text-ash">
@@ -865,6 +1130,19 @@ function PricingTab({ session, rows, reload }) {
       </p>
 
       {notice ? <div className="mt-4"><Banner kind={notice.kind}>{notice.text}</Banner></div> : null}
+
+      {win.error ? <div className="mt-4"><Banner>Could not load prices. Try refreshing.</Banner></div> : null}
+
+      <Pager
+        label="pricing"
+        page={win.page}
+        pageSize={paging.pageSize}
+        pageCount={win.pageCount}
+        total={win.total}
+        busy={listBusy}
+        onPage={setPage}
+        onPageSize={setPageSize}
+      />
 
       {sections.map((section) => (
         <div key={section.kind} className="mt-8">
@@ -917,7 +1195,18 @@ function PricingTab({ session, rows, reload }) {
 
 function Console({ session, onExpired }) {
   const [tab, setTab] = useState("roster");
-  const [rows, setRows] = useState({ registrations: [], audit: [], staff: [], pricing: [] });
+  /* Each tab keeps its own window of rows, plus the page controls that produced
+     it. EMPTY_WINDOW / DEFAULT_PAGING are module constants, so this initialiser
+     runs once and the state identity stays stable across renders. */
+  const [rows, setRows] = useState({
+    registrations: EMPTY_WINDOW,
+    audit: EMPTY_WINDOW,
+    staff: EMPTY_WINDOW,
+    pricing: EMPTY_WINDOW,
+  });
+  const [paging, setPaging] = useState(DEFAULT_PAGING);
+  const [loading, setLoading] = useState({});
+
   const [remaining, setRemaining] = useState(session.expiresAt - Date.now());
   const [signedOut, setSignedOut] = useState(false);
 
@@ -955,27 +1244,82 @@ function Console({ session, onExpired }) {
     }
   }, [remaining, signedOut, onExpired]);
 
-  const reload = useCallback(async () => {
-    const token = session.token;
-    const [reg, audit, staff, pricing] = await Promise.all([
-      staffListRegistrations(token),
-      can(session.role, "view_audit") ? staffListAudit(token) : { data: [] },
-      can(session.role, "manage_staff") ? staffListStaff(token) : { data: [] },
-      can(session.role, "edit_pricing") ? staffListPricing(token) : { data: [] },
-    ]);
-    setRows({
-      registrations: reg.data,
-      audit: audit.data,
-      staff: staff.data,
-      pricing: pricing.data,
-    });
+  const reload = useCallback(
+    async (tabId, override) => {
+      const spec = LIST_BY_TAB[tabId];
+      if (!spec || !can(session.role, spec.action)) return;
+      const token = session.token;
+      const options = override ?? paging[spec.key];
+      setLoading((prev) => ({ ...prev, [tabId]: true }));
+      const result = await spec.run(token, options);
+      setLoading((prev) => ({ ...prev, [tabId]: false }));
+      if (!result.ok) {
+        setRows((prev) => ({
+          ...prev,
+          [spec.key]: { ...prev[spec.key], error: result.error ?? "Could not load." },
+        }));
+        return;
+      }
+      const nextWindow = {
+        data: result.data,
+        total: result.total,
+        page: result.page,
+        pageCount: result.pageCount,
+        error: null,
+      };
+      setRows((prev) => ({ ...prev, [spec.key]: nextWindow }));
+      // An edit can remove the last row of the final page (a registration
+      // removed, a filter narrowed). Sitting on page 3 of 3 and then reading
+      // "0 rows" is a dead end for the operator, so step back to the last page
+      // that still exists. Only when the page really is empty — not on every
+      // load, which would fight the operator's own paging.
+      if (result.data.length === 0 && result.page > 1 && result.page > result.pageCount) {
+        setPaging((prev) => ({
+          ...prev,
+          [spec.key]: { ...prev[spec.key], page: result.pageCount },
+        }));
+      }
+    },
     // pricingVersion is a dependency on purpose: when the price store changes
-    // (a save, or the app-start load landing) this re-reads the console's rows.
-  }, [session, pricingVersion]);
+    // (a save, or the app-start load landing) the pricing tab re-reads itself.
+    [session, paging, pricingVersion]
+  );
 
+  /* Load the visible tab whenever the tab, its paging, or the price version
+     changes. `reload` already closes over `paging`, so changing a page or a
+     filter produces a new callback identity and this fires. One effect rather
+     than a special case for pricing: the pricing tab still refreshes when the
+     price store changes because `pricingVersion` is a `reload` dependency. */
   useEffect(() => {
-    reload();
-  }, [reload]);
+    reload(tab);
+  }, [tab, reload]);
+
+  /** Jump to a page. The Pager's Refresh button calls this with the same page
+   *  it is already on, which is what makes it a refresh rather than a move. */
+  const goToPage = useCallback(
+    (tabId, page) => {
+      const spec = LIST_BY_TAB[tabId];
+      if (!spec) return;
+      setPaging((prev) => mergePaging(prev, spec.key, { page: Math.max(1, page) }));
+    },
+    []
+  );
+
+  /** Change the page size, always returning to page 1: page 7 of the old size
+   *  is almost certainly past the end of the new, larger one. */
+  const setPageSize = useCallback((tabId, pageSize) => {
+    const spec = LIST_BY_TAB[tabId];
+    if (!spec) return;
+    setPaging((prev) => ({ ...prev, [spec.key]: { ...prev[spec.key], pageSize, page: 1 } }));
+  }, []);
+
+  /** Update a filter (search text, status, action). Resetting to page 1 is the
+   *  whole point — see mergePaging. */
+  const setFilter = useCallback((tabId, patch) => {
+    const spec = LIST_BY_TAB[tabId];
+    if (!spec) return;
+    setPaging((prev) => mergePaging(prev, spec.key, { ...patch, page: 1 }));
+  }, []);
 
   async function signOut() {
     await staffLogout();
@@ -1048,11 +1392,49 @@ function Console({ session, onExpired }) {
 
       <div className="mt-8">
         {active?.id === "roster" ? (
-          <RosterTab session={session} rows={rows.registrations} reload={reload} />
+          <RosterTab
+            session={session}
+            window={rows.registrations}
+            paging={paging.registrations}
+            busy={Boolean(loading.roster)}
+            reload={() => reload("roster")}
+            setPage={(page) => goToPage("roster", page)}
+            setPageSize={(size) => setPageSize("roster", size)}
+            setFilter={(patch) => setFilter("roster", patch)}
+          />
         ) : null}
-        {active?.id === "audit" ? <AuditTab rows={rows.audit} /> : null}
-        {active?.id === "staff" ? <StaffTab session={session} rows={rows.staff} reload={reload} /> : null}
-        {active?.id === "pricing" ? <PricingTab session={session} rows={rows.pricing} reload={reload} /> : null}
+        {active?.id === "audit" ? (
+          <AuditTab
+            window={rows.audit}
+            paging={paging.audit}
+            busy={Boolean(loading.audit)}
+            setPage={(page) => goToPage("audit", page)}
+            setPageSize={(size) => setPageSize("audit", size)}
+            setFilter={(patch) => setFilter("audit", patch)}
+          />
+        ) : null}
+        {active?.id === "staff" ? (
+          <StaffTab
+            session={session}
+            window={rows.staff}
+            paging={paging.staff}
+            busy={Boolean(loading.staff)}
+            reload={() => reload("staff")}
+            setPage={(page) => goToPage("staff", page)}
+            setPageSize={(size) => setPageSize("staff", size)}
+          />
+        ) : null}
+        {active?.id === "pricing" ? (
+          <PricingTab
+            session={session}
+            window={rows.pricing}
+            paging={paging.pricing}
+            busy={Boolean(loading.pricing)}
+            reload={() => reload("pricing")}
+            setPage={(page) => goToPage("pricing", page)}
+            setPageSize={(size) => setPageSize("pricing", size)}
+          />
+        ) : null}
       </div>
     </main>
   );

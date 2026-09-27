@@ -31,6 +31,8 @@
     "verify:staff": "node scripts/verify-staff.mjs",
     "verify:staff-ui": "node scripts/verify-staff-ui.mjs",
     "verify:pricing": "node scripts/verify-pricing.mjs",
+    "verify:pagination": "node scripts/verify-pagination.mjs",
+    "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",
     "db:query": "node scripts/db-query.mjs",
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
     "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap"

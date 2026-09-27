@@ -133,7 +133,7 @@ export async function staffFetch(path, { method = "GET", body, staffToken, heade
   } catch {
     data = text;
   }
-  return { ok: res.ok, status: res.status, data, error: res.ok ? null : data };
+  return { ok: res.ok, status: res.status, data, headers: res.headers, error: res.ok ? null : data };
 }
 
 async function rpc(name, params, staffToken) {
@@ -217,31 +217,151 @@ export function staffMsRemaining(now = Date.now()) {
 
 /* ---------- data ---------- */
 
-const rowsOf = (res) => (Array.isArray(res.data) ? res.data : []);
+/** Rows are a window onto a table, never the table. PostgREST caps a response
+ *  at `max-rows`; without a Range header every list below would silently stop
+ *  at that cap and an operator would read "this is all of them" as truth. */
+export const DEFAULT_PAGE_SIZE = 25;
+/** Guards the pager: a page size is operator input like any other, and an
+ *  unbounded one is the same mistake this whole layer exists to remove. */
+export const MAX_PAGE_SIZE = 200;
+/** The sizes the console offers. 200 is included so the pricing tab can ask for
+ *  a single window covering the whole catalogue. */
+export const PAGE_SIZES = [10, 25, 50, 100, 200];
 
-export async function staffListRegistrations(token) {
-  const res = await staffFetch("registrations?select=*&order=created_at.desc", { staffToken: token });
-  return { ok: res.ok, data: rowsOf(res), error: res.ok ? null : res.error };
+/** Quote a value so PostgREST treats it as one literal.
+ *
+ *  Without the quotes a search term containing a comma or a bracket is parsed
+ *  as filter syntax: typing `Ann,Smith` would silently become two predicates
+ *  instead of one search. Backslashes and double quotes are escaped, and the
+ *  whole filter is then URL-encoded by `qs()` below, which is also what keeps
+ *  the `%` wildcards in `ilike` from being mangled in transit — Cloudflare
+ *  answers an unencoded `%` with a 500 error page before PostgREST sees it. */
+function q(value) {
+  return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-export async function staffListAudit(token, limit = 200) {
-  const res = await staffFetch(`staff_audit_log?select=*&order=created_at.desc&limit=${limit}`, {
-    staffToken: token,
-  });
-  return { ok: res.ok, data: rowsOf(res), error: res.ok ? null : res.error };
+/** Compose `?select=...&order=...` with optional server-side filters.
+ *  Every filter is a server-side predicate on purpose: filtering 200 rows in
+ *  the browser and then paging them would page a *filtered client list*, so
+ *  page 2 would silently be page 2 of the wrong set. */
+function qs(select, order, filters = {}) {
+  const params = new URLSearchParams();
+  params.set("select", select);
+  if (order) params.set("order", order);
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === "" || value === "all") continue;
+    params.set(key, value);
+  }
+  return params.toString();
 }
 
-export async function staffListStaff(token) {
+/** Ask PostgREST for the exact total alongside the page. `Prefer: count=exact`
+ *  makes it return `Content-Range: 0-24/137`, so the pager knows how many pages
+ *  exist without a second round trip. */
+function withCount(res) {
+  const range = res.headers?.get?.("Content-Range") ?? "";
+  const total = Number(range.split("/")[1]);
+  return Number.isFinite(total) ? total : null;
+}
+
+/** Shared shape: one page of rows plus the total that matches the filters.
+ *  `page` is 1-based because that is what a human reads off the pager, and
+ *  `pageCount` keeps the arithmetic out of every tab. */
+function paged(res, { page, pageSize, empty = [] }) {
+  // 416 is PostgREST's "Range Not Satisfiable": the requested window starts
+  // past the end of the result set. That is not a failure to report, it is the
+  // honest answer to "what is on page 99" — which is nothing. Treating it as an
+  // error would paint the console red after a delete emptied the last page.
+  if (!res.ok && res.status !== 416) {
+    return { ok: false, data: empty, total: null, page, pageSize, pageCount: 1, error: res.error };
+  }
+  const rows = Array.isArray(res.data) ? res.data : [];
+  const total = withCount(res);
+  // A count we do not have is not the same as a count of zero: fall back to
+  // "there may be more" so the pager stays usable rather than lying.
+  const pageCount = total == null ? 1 : Math.max(1, Math.ceil(total / pageSize));
+  return { ok: true, data: rows, total, page, pageSize, pageCount, error: null };
+}
+
+/** Clamp operator input into something a database should be asked for. */
+export function normalizePage({ page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
+  const size = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(pageSize) || DEFAULT_PAGE_SIZE));
+  const n = Math.max(1, Number(page) || 1);
+  return { page: n, pageSize: size };
+}
+
+export async function staffListRegistrations(token, options = {}) {
+  const { page, pageSize } = normalizePage(options);
+  const { query, status } = options;
+  const term = String(query ?? "").trim();
+
+  const filters = {};
+  if (status && status !== "all") filters.payment_status = `eq.${status}`;
+  // `or=(name.ilike."%term%",...)` — the search the operator typed, pushed down
+  // to Postgres so it is scoped to the whole table instead of one loaded page.
+  // Filtering the loaded rows in the browser instead would report "no match"
+  // for every participant who is not on the page currently on screen.
+  if (term) {
+    const like = `%${term}%`;
+    filters.or = `(name.ilike.${q(like)},email.ilike.${q(like)},roll_number.ilike.${q(like)},college_name.ilike.${q(like)},utr_number.ilike.${q(like)})`;
+  }
+
   const res = await staffFetch(
-    "staff_users?select=id,username,full_name,role,is_active,last_login_at,created_at&order=created_at",
-    { staffToken: token }
+    `registrations?${qs("*", "created_at.desc", filters)}`,
+    {
+      staffToken: token,
+      headers: {
+        Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
+        Prefer: "count=exact",
+      },
+    }
   );
-  return { ok: res.ok, data: rowsOf(res), error: res.ok ? null : res.error };
+  return paged(res, { page, pageSize });
 }
 
-export async function staffListPricing(token) {
-  const res = await staffFetch("pricing?select=*&order=kind,ref_id", { staffToken: token });
-  return { ok: res.ok, data: rowsOf(res), error: res.ok ? null : res.error };
+export async function staffListAudit(token, options = {}) {
+  const { page, pageSize } = normalizePage(options);
+  const filters = {};
+  if (options.action && options.action !== "all") filters.action = `eq.${options.action}`;
+
+  const res = await staffFetch(`staff_audit_log?${qs("*", "created_at.desc", filters)}`, {
+    staffToken: token,
+    headers: {
+      Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
+      Prefer: "count=exact",
+    },
+  });
+  return paged(res, { page, pageSize });
+}
+
+export async function staffListStaff(token, options = {}) {
+  const { page, pageSize } = normalizePage(options);
+  const res = await staffFetch(
+    `staff_users?${qs(
+      "id,username,full_name,role,is_active,last_login_at,created_at",
+      "created_at"
+    )}`,
+    {
+      staffToken: token,
+      headers: {
+        Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
+        Prefer: "count=exact",
+      },
+    }
+  );
+  return paged(res, { page, pageSize });
+}
+
+export async function staffListPricing(token, options = {}) {
+  const { page, pageSize } = normalizePage(options);
+  const res = await staffFetch(`pricing?${qs("*", "kind,ref_id")}`, {
+    staffToken: token,
+    headers: {
+      Range: `${(page - 1) * pageSize}-${page * pageSize - 1}`,
+      Prefer: "count=exact",
+    },
+  });
+  return paged(res, { page, pageSize });
 }
 
 /**
@@ -303,10 +423,19 @@ export async function staffRevokeSessions(userId, token) {
   return rpc("staff_revoke_sessions", { p_user_id: userId }, token);
 }
 
-/** Upsert a price. The DB trigger records who changed it and when. */
+/** Upsert a price. The DB trigger records who changed it and when.
+ *
+ *  Existence is decided with a targeted one-row lookup on the natural key
+ *  (kind, ref_id) rather than by scanning a listed page. Listing was safe only
+ *  when the whole table arrived in one response; under pagination this would
+ *  have inserted a duplicate price whenever the target row happened not to be on
+ *  the page the operator was looking at. */
 export async function staffSetPrice({ kind, refId, price, isActive, token }) {
-  const existing = await staffListPricing(token);
-  const match = existing.data.find((p) => p.kind === kind && p.ref_id === refId);
+  const existing = await staffFetch(
+    `pricing?select=id&kind=eq.${kind}&ref_id=eq.${refId}&limit=1`,
+    { staffToken: token }
+  );
+  const match = Array.isArray(existing.data) ? existing.data[0] : null;
   if (match) {
     const res = await staffFetch(`pricing?id=eq.${match.id}`, {
       method: "PATCH",

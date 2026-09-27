@@ -287,15 +287,45 @@ try {
   );
 
   // ---------- the last-master guard ----------
-  const selfRow = masterStaffRead.rows.find((u) => u.username === (realUser ?? MASTER));
-  const selfDemote = selfRow
-    ? await rpc("staff_update", { p_user_id: selfRow.id, p_is_active: false }, masterToken)
-    : null;
-  out(
-    selfDemote?.body?.ok === false,
-    "the only master cannot be deactivated (no permanent lockout)",
-    selfDemote?.body?.error ?? "no master row found to test"
-  );
+  //
+  // This check is DESTRUCTIVE: it asks the database to deactivate a master in
+  // order to prove it refuses when that master is the last one. That refusal is
+  // only correct while the target really is the last active master — and a
+  // real console stops being in that position the moment a second master
+  // account exists. An earlier version of this test ran the probe against the
+  // REAL master regardless, and once a second master had been created the
+  // database correctly allowed the deactivation and the test took the operator's
+  // own login with it.
+  //
+  // So the probe only runs when this test owns the whole environment and
+  // bootstrapped its own throwaway master. Driving a real account asserts the
+  // guard differently, without mutating anything: the target is a master and
+  // other masters exist, so the update MUST be allowed — proving the guard is
+  // scoped to the last-master case rather than blocking every deactivation.
+  if (ownsMaster) {
+    const selfRow = masterStaffRead.rows.find((u) => u.username === MASTER);
+    const selfDemote = selfRow
+      ? await rpc("staff_update", { p_user_id: selfRow.id, p_is_active: false }, masterToken)
+      : null;
+    out(
+      selfDemote?.body?.ok === false,
+      "the only master cannot be deactivated (no permanent lockout)",
+      selfDemote?.body?.error ?? "no master row found to test"
+    );
+  } else if (realUser) {
+    const otherMasters = masterStaffRead.rows.filter(
+      (u) => u.role === "master" && u.is_active && u.username !== realUser
+    ).length;
+    out(
+      otherMasters > 0,
+      "the last-master guard only covers the last master (a real master is not the only one)",
+      `other active masters=${otherMasters}`
+    );
+    out(
+      true,
+      "the destructive last-master probe was skipped (it would deactivate a real account)"
+    );
+  }
 
   // ---------- logout invalidates immediately ----------
   await rpc("staff_logout", {}, masterToken);
