@@ -35,6 +35,7 @@
     "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",
     "verify:selection": "node scripts/verify-selection.mjs",
     "verify:catalogue": "node scripts/verify-catalogue.mjs",
+    "verify:contacts": "node scripts/verify-contacts.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
     "verify:profile": "node scripts/verify-profile.mjs",
     "verify:register": "node scripts/verify-register.mjs",

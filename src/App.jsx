@@ -30,6 +30,9 @@ const Profile = lazy(() => import("./pages/Profile.jsx"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback.jsx"));
 const NexusAI = lazy(() => import("./pages/NexusAI.jsx"));
 const About = lazy(() => import("./pages/About.jsx"));
+/* The contact page's contents come from the database, not this bundle: a
+   hardcoded address is an address nobody remembers to update. */
+const Contact = lazy(() => import("./pages/Contact.jsx"));
 const NotFound = lazy(() => import("./pages/NotFound.jsx"));
 
 /** Minimal in-layout loader shown while a route chunk resolves. */
@@ -101,6 +104,7 @@ export default function App() {
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/ai" element={<NexusAI />} />
               <Route path="/about" element={<About />} />
+              <Route path="/contact" element={<Contact />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AnimatePresence>

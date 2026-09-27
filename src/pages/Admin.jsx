@@ -42,6 +42,7 @@ import { buildRosterWorkbook, downloadXlsx } from "../lib/xlsx.js";
 import Select from "../components/ui/Select.jsx";
 import DateField from "../components/ui/DateField.jsx";
 import CatalogueManager from "../components/admin/CatalogueManager.jsx";
+import ContactManager from "../components/admin/ContactManager.jsx";
 import { bundles } from "../data/bundles.js";
 import { events } from "../data/events.js";
 import { loadPricing, subscribePricing } from "../data/pricing.js";

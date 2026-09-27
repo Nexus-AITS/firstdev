@@ -21,6 +21,7 @@ const ROUTES = [
   ["/events/the-scientist-files", "THE SCIENTIST FILES"],
   ["/events/free-fire", "FREE FIRE"],
   ["/ai", "THE NEXUS"],
+["/contact", "REACH"],
   ["/about", "EVERYTHING"],
   ["/register", "EVENT REGISTER"],
   ["/profile", "YOUR ACCOUNT"], // participant account, gated like /register

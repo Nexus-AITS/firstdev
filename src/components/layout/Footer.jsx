@@ -9,6 +9,7 @@ const QUICK = [
   { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },
   { to: "/about", label: "ABOUT" },
+  { to: "/contact", label: "CONTACT" },
 ];
 
 export default function Footer() {

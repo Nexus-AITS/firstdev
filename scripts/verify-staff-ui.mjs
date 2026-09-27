@@ -6,7 +6,7 @@
  *
  * verify-staff.mjs proves the database refuses a non-master. This proves the
  * other half: that a master can actually CREATE an admin / coordinator / master
- * from the panel itself, change a role, reset a password and deactivate — the
+ * from the panel itself, change a role, reset a password and deactivate ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â the
  * operations that were missing because StaffTab rendered a list but never
  * rendered its own "add account" form.
  *
@@ -122,7 +122,7 @@ try {
   // The role picker is a themed listbox, not a <select>: read its options by
   // OPENING it, which also proves the control actually opens. The values are
   // read from data-value because the LABELS are deliberately descriptive
-  // ("Administrator — accept or reject participants"), so comparing label text
+  // ("Administrator ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â accept or reject participants"), so comparing label text
   // to the role name would be comparing the wrong thing.
   await page.click('[data-select="staff-new-role"]');
   await page.waitForSelector('[data-select-list="staff-new-role"] [role="option"]');
@@ -204,7 +204,100 @@ try {
     adminTabs.join(" / ") || "(none)"
   );
 
-  /* ---- audit: every change recorded server-side ---- */
+  /* ---- the Contacts tab: a master publishes a channel, the public page gets it ---- */
+  out(
+    tabs.some((t) => /contacts/i.test(t)),
+    "a master sees the Contacts tab",
+    tabs.join(" / ")
+  );
+
+  await page.click('button:has-text("Sign out")');
+  await page.waitForTimeout(2500);
+  await page.fill("#staff-username", username);
+  await page.fill("#staff-password", password);
+  await page.click('#admin-signin button[type="submit"]');
+  await page.waitForTimeout(4000);
+  await page.click('nav[aria-label="Console sections"] button:has-text("Contacts")');
+  await page.waitForSelector('[data-action="contact-manager"]');
+  out(true, "Contacts tab opens");
+
+  for (const id of ["#contact-kind", "#contact-label", "#contact-purpose", "#contact-value"]) {
+    out((await page.locator(id).count()) === 1, `contacts form has ${id}`);
+  }
+
+  // A real end-to-end publish: the form writes, and the PUBLIC page serves the
+  // value. The database suite proves the RPCs; this proves the console is wired
+  // to them, which is the half a schema check cannot see.
+  const probeLabel = `probe-contact-${stamp}`;
+  await page.fill("#contact-label", probeLabel);
+  await page.fill("#contact-purpose", "probe channel");
+  await page.fill("#contact-value", "9000000000");
+  await page.click('[data-select="contact-kind"]');
+  await page.waitForSelector('[data-select-list="contact-kind"] [role="option"]');
+  await page.click('[data-select-list="contact-kind"] [role="option"]:has-text("Phone")');
+  await page.click('[data-action="save-contact"]');
+  await page.waitForTimeout(3000);
+
+  const published = await sql(
+    `select kind, value, is_active from public.contacts where label = '${probeLabel}';`
+  );
+  out(
+    published[0]?.kind === "phone" && published[0]?.is_active === true,
+    "a channel typed into the console is persisted",
+    JSON.stringify(published[0] ?? {})
+  );
+
+  // The public page, as an anonymous visitor sees it.
+  const anon = await ctx.browser().newContext();
+  const anonPage = await anon.newPage();
+  await anonPage.goto(`${BASE}/contact`, { waitUntil: "domcontentloaded" });
+  await anonPage.waitForSelector('[data-action="contact-list"]', { timeout: 15000 });
+  const shown = await anonPage.locator('[data-action="contact-list"] li').allInnerTexts();
+  out(
+    shown.some((t) => t.includes(probeLabel)),
+    "the new channel appears on the public contact page",
+    `${shown.length} card(s)`
+  );
+
+    // And it is a real dial link, not the text pasted into an <a>. Typed without a
+    // country code, so the page must NOT invent one: "+9000000000" is that number
+    // nowhere, and a tel: link that dials the wrong country is worse than no link.
+    const telHref = await anonPage
+      .locator('[data-action="contact-list"] a:has-text("9000000000")')
+      .getAttribute("href");
+    out(
+      telHref === "tel:9000000000",
+      "a phone channel dials exactly what was typed, with no invented country code",
+      telHref ?? "missing"
+    );
+
+  await page.locator(`[data-action="contact-rows"] li:has-text("${probeLabel}") button:has-text("Retire")`).click();
+  await page.waitForTimeout(3000);
+  const retired = await sql(`select is_active from public.contacts where label = '${probeLabel}';`);
+  out(retired[0]?.is_active === false, "retiring from the console is persisted");
+
+  await anonPage.reload({ waitUntil: "domcontentloaded" });
+  await anonPage.waitForTimeout(3000);
+  const afterRetire = await anonPage.locator('[data-action="contact-list"] li').allInnerTexts();
+  out(
+    !afterRetire.some((t) => t.includes(probeLabel)),
+    "a retired channel disappears from the public page"
+  );
+
+  /* ---- audit ---- */
+  const contactAudit = await sql(
+    `select action from public.staff_audit_log where entity = 'contact' and entity_id = ` +
+      `(select id::text from public.contacts where label = '${probeLabel}') order by created_at;`
+  );
+  out(
+    (contactAudit ?? []).some((a) => a.action === "create_contact") &&
+      (contactAudit ?? []).some((a) => a.action === "retire_contact"),
+    "the console's create and retire are both audited",
+    (contactAudit ?? []).map((a) => a.action).join(", ")
+  );
+  await anon.close();
+ 
+   /* ---- audit: every change recorded server-side ---- */
   const audited = await sql(
     `select action, count(*)::int as n from public.staff_audit_log ` +
       `where entity_id in (select id::text from public.staff_users where username like 'probe-%-${stamp}') ` +
@@ -224,10 +317,13 @@ try {
      audit rows survive with staff_id NULL, which is the intended behaviour. */
   const list = Object.values(CREATED).map((u) => `'${u}'`).join(",");
   await sql(`delete from public.staff_users where username in (${list});`)
+    .then(() => sql(`delete from public.contacts where label like 'probe-contact-%';`))
     .then(() => console.log(`\ncleaned up ${Object.keys(CREATED).length} probe accounts`))
     .catch((e) => console.error(`FAIL  cleanup: ${e?.message || e}`));
   await browser.close();
   const left = await sql(`select count(*)::int as n from public.staff_users where username in (${list});`);
+  const rowsLeft = await sql(`select count(*)::int as n from public.contacts where label like 'probe-contact-%';`);
+  out(rowsLeft[0]?.n === 0, "no probe contact rows left behind", `n=${rowsLeft[0]?.n}`);
   out(left[0]?.n === 0, "no probe accounts left behind", `n=${left[0]?.n}`);
 }
 
