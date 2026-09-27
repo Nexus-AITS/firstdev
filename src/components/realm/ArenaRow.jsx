@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
+import EventLogo from "../event/EventLogo.jsx";
 
 /** THE ARENA — competitive HUD row: sigil, number, title, mode, status, view. */
 export default function ArenaRow({ event, index = 0 }) {
@@ -42,6 +43,15 @@ export default function ArenaRow({ event, index = 0 }) {
             <h3 className="anim-glitch mt-1 [animation-play-state:paused] font-display text-[clamp(1.4rem,2.6vw,2.1rem)] tracking-[0.04em] text-crystal transition-[text-shadow] duration-500 group-hover:[animation-play-state:running] group-hover:[text-shadow:0_0_24px_rgba(168,85,247,0.75)]">
               {event.title}
             </h3>
+            {/* The mark, so a game event is recognisable in the list before
+                anyone reads the title. */}
+            {event.logo ? (
+              <EventLogo
+                logo={event.logo}
+                title={event.title}
+                className="mt-3 w-[min(70%,260px)]"
+              />
+            ) : null}
           </div>
 
           <p className="text-[10px] uppercase tracking-[0.3em] text-crystal/55 md:col-span-2">

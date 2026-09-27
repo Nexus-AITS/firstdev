@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import Page from "../components/ui/Page.jsx";
@@ -7,15 +7,18 @@ import CinematicButton from "../components/ui/CinematicButton.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById, getEventFee } from "../data/events.js";
+import { getEventById, getEventFee, getEventFields } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
 import usePricing from "../hooks/usePricing.js";
 import {
   addRegistration,
   listRegistrations,
+  listRegistrationEvents,
   submitUtr,
+  validateEventFields,
   validateRegistration,
 } from "../data/registrations.js";
+import { loadMyProfile } from "../data/profiles.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
 import EventSelection from "../components/register/EventSelection.jsx";
 import { setRegistrationEvents } from "../data/staff.js";
@@ -144,9 +147,9 @@ export default function Register() {
   // price. Using `bundle.price` here would freeze whatever the JS constant said
   // at registration time into the roster, even after a master changed it.
   const purchase = event
-    ? { type: "event", label: event.title }
+    ? { type: "event", label: event.title, ref: event.id }
     : bundle
-      ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${getBundlePrice(bundle.id)}` }
+      ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${getBundlePrice(bundle.id)}`, ref: bundle.id }
       : null;
 
   // A bundle with pick-pools needs the participant's choice BEFORE the payment
@@ -157,6 +160,12 @@ export default function Register() {
   //   details -> select (only when a bundle has pools) -> pay -> utr
   // A plain single-event registration has nothing to choose and skips it.
   const needsSelection = Boolean(bundle?.includes?.some((line) => line.pick));
+  // The event-specific inputs this purchase has to collect (FREE FIRE's in-game
+  // ID today). Read from the catalogue, so the form follows the data and a new
+  // event field needs no change here.
+  const declaredFields = getEventFields(purchase?.ref);
+  const [extra, setExtra] = useState({});
+  const setExtraField = (name) => (e) => setExtra((current) => ({ ...current, [name]: e.target.value }));
   const [step, setStep] = useState("details"); // details | select | pay | utr | done
   const [form, setForm] = useState(emptyForm);
   const [utr, setUtr] = useState("");
@@ -174,11 +183,94 @@ export default function Register() {
   const [confirmedAmount, setConfirmedAmount] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  /* ---------------- resume + prefill ---------------- */
+
+  // The profile page links back here as /register?event=…&resume=<row id>. The
+  // row — not the URL — is what says how far the participant got.
+  const resumeId = searchParams.get("resume");
+  // Guards the adoption against running twice (the load effect can re-fire when
+  // `mine` changes underneath it). A ref, not a plain object: a fresh object
+  // every render would forget the guard immediately.
+  const resumedRef = useRef(null);
+
+  /**
+   * The participant's own row for the email currently typed, or null.
+   *
+   * `mine` is already RLS-scoped to the signed-in user, so this can only ever
+   * match a row the caller owns. That is what makes adopting it safe: it is not
+   * "does this email exist in the database", it is "is this one of mine".
+   */
+  function findMine(email) {
+    const key = String(email ?? "").trim().toLowerCase();
+    if (!key) return null;
+    return mine.find((r) => String(r.email ?? "").trim().toLowerCase() === key) ?? null;
+  }
+
+  /**
+   * Continue an existing registration instead of starting a second one.
+   *
+   * This is the fix for the dead end: a participant who refreshed (or whose
+   * earlier attempt had already written the row) used to be sent back to step
+   * 01 with an empty form, and once they re-submitted they hit
+   * uq_registrations_email — "This email is already registered" — on every
+   * attempt after. The row existed, the payment had been made, and there was no
+   * path to the confirmation screen at all.
+   *
+   * Where they resume is read from the ROW:
+   *   reference already submitted  → the confirmation
+   *   bundle with a choice already → the QR (the selection is recorded)
+   *   bundle without a choice      → the selection step
+   *   otherwise                    → the QR
+   */
+  async function adopt(row) {
+    if (!row) return;
+    setForm({
+      name: row.name ?? "",
+      roll_number: row.roll_number ?? "",
+      college_name: row.college_name ?? "",
+      year: row.year ?? "",
+      department: row.department ?? "",
+      phone_number: row.phone_number ?? "",
+      email: row.email ?? "",
+    });
+    // Whatever the row already holds for the event's own fields, so a resumed
+    // FREE FIRE registration shows the ID they gave rather than an empty input
+    // that looks like they still owe one.
+    const carried = {};
+    for (const field of declaredFields) {
+      if (row[field.name] != null) carried[field.name] = row[field.name];
+    }
+    setExtra(carried);
+    setDone(row);
+    setConfirmedAmount(null);
+
+    if (row.utr_number || !paid) {
+      setStep("done");
+      return;
+    }
+    if (needsSelection) {
+      const { data: chosen } = await listRegistrationEvents(row.id);
+      setStep((chosen ?? []).length > 0 ? "pay" : "select");
+      return;
+    }
+    setStep("pay");
+  }
+
   /* The stepper is built from the same list the progress bar renders, and the
      index is looked up in THAT list rather than from a fixed map. The map would
      have to know that a bundle-with-pools inserts an extra step, and it would
      drift the moment another conditional step is added — the progress bar would
-     highlight the wrong entry while the wizard itself advanced correctly. */
+     highlight the wrong entry while the wizard itself advanced correctly.
+
+     Every flow ends on CONFIRM — paid or free.
+   *
+   * It used to exist only on the free path, which put the paid wizard in a
+   * state it had no entry for: `findIndex("done")` returned -1, Math.max
+   * clamped it to 0, and the progress track rewound to "01 YOUR DETAILS" on
+   * the confirmation screen. So at the exact moment the participant submitted
+   * their registration, the tracker said they were back at step one — which
+   * reads as "my submission did nothing". The stepper and the wizard have to
+   * agree about what the last step IS. */
   const stepList = [
     { id: "details", label: "YOUR DETAILS" },
     ...(needsSelection ? [{ id: "select", label: "CHOOSE EVENTS" }] : []),
@@ -187,12 +279,10 @@ export default function Register() {
           { id: "pay", label: "PAYMENT QR" },
           { id: "utr", label: "PAYMENT REFERENCE" },
         ]
-      : [{ id: "done", label: "CONFIRM" }]),
+      : []),
+    { id: "done", label: "CONFIRM" },
   ];
-  const stepIndex = Math.max(
-    0,
-    stepList.findIndex((s) => s.id === (step === "done" ? "done" : step))
-  );
+  const stepIndex = Math.max(0, stepList.findIndex((s) => s.id === step));
 
   // While the session is still resolving the page must not claim to be either
   // signed in or signed out — the register/verify suite and a returning
@@ -201,19 +291,57 @@ export default function Register() {
   const gated = authReady && !signedIn;
 
   /**
-   * Load this participant's own registrations.
+   * Prefill the details form from the profile.
    *
-   * RLS already scopes the select to `user_id = auth.uid()`, so this shows the
-   * signed-in participant their seats and nothing else. It is also the
-   * mechanism that lets them re-submit a UTR the operations team rejected,
-   * which is impossible without an owner on the row.
+   * Only when the form is untouched: a prefill that overwrites what somebody is
+   * halfway through typing is worse than no prefill at all. This is the payoff
+   * of the profile page — details entered once, never retyped for the next
+   * event.
+   *
+   * Declared here, BELOW `authReady`, on purpose. A dependency array is
+   * evaluated during render, so listing `authReady` above its own declaration is
+   * a temporal-dead-zone ReferenceError that blanks the whole route — and no
+   * build or type check catches it. It was written that way first.
    */
+  useEffect(() => {
+    if (!authReady || !signedIn) return;
+    let alive = true;
+    loadMyProfile().then(({ data }) => {
+      if (!alive || !data) return;
+      setForm((current) => {
+        const untouched = Object.keys(emptyForm).every(
+          (key) => String(current[key] ?? "").trim() === ""
+        );
+        if (!untouched) return current;
+        return {
+          name: data.full_name ?? "",
+          roll_number: data.roll_number ?? "",
+          college_name: data.college_name ?? "",
+          year: data.year ?? "",
+          department: data.department ?? "",
+          phone_number: data.phone_number ?? "",
+          email: data.email ?? "",
+        };
+      });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [authReady, signedIn]);
 
   function proceedFromDetails(e) {
     e.preventDefault();
     const message = validateRegistration({ ...form, utr_number: null });
     if (message) {
       setError(message);
+      return;
+    }
+    // A Free Fire ID is not a nicety: it is what the player is checked against
+    // at the match. Same rule as the database trigger, checked here so the
+    // message arrives in the participant's language instead of as a 400.
+    const fieldMessage = validateEventFields(purchase?.ref, extra);
+    if (fieldMessage) {
+      setError(fieldMessage);
       return;
     }
     setError("");
@@ -240,16 +368,31 @@ export default function Register() {
     setSaving(true);
     setError("");
 
-    const { data: row, error: createError } = await addRegistration({
-      ...form,
-      utr_number: null,
-      purchase_type: purchase?.type ?? null,
-      purchase_label: purchase?.label ?? null,
-    });
-    if (createError) {
-      setSaving(false);
-      setError(createError);
-      return;
+    // The row may already exist — a refresh between the selection and the QR is
+    // all it takes — and inserting again would collide with
+    // uq_registrations_email, stranding the participant on this step with an
+    // error they cannot resolve. `mine` only contains rows RLS lets them see,
+    // so "is one of mine with this email" is the safe test.
+    let row = findMine(form.email);
+    let created = false;
+
+    if (!row) {
+      const { data: newRow, error: createError } = await addRegistration({
+        ...form,
+        utr_number: null,
+        purchase_type: purchase?.type ?? null,
+        purchase_label: purchase?.label ?? null,
+        purchase_ref: purchase?.ref ?? null,
+        eventFields: extra,
+      });
+      if (createError) {
+        setSaving(false);
+        setError(createError);
+        return;
+      }
+      row = newRow;
+      created = true;
+      setMine((current) => [row, ...current]);
     }
 
     const result = await setRegistrationEvents({
@@ -265,12 +408,14 @@ export default function Register() {
     }
     setConfirmedAmount(result.amount);
     setDone(row);
-    setMine((current) => [row, ...current]);
+    // The refreshed row keeps `mine` honest when we adopted an older one —
+    // `created` is what stops us prepending the same registration twice.
+    if (!created) setMine((current) => current.map((r) => (r.id === row.id ? row : r)));
     setStep(paid ? "pay" : "done");
   }
 
   /**
-   * Write the registration, or attach the UTR when the row already exists.
+   * Write the registration, or attach the UTR to the one that already exists.
    *
    * There is no local fallback: if the write fails the participant is told and
    * stays on the step, because a success screen for a row the server never
@@ -282,6 +427,11 @@ export default function Register() {
    * exists, so this must SUBMIT THE REFERENCE to it. Inserting again would
    * collide with uq_registrations_email — the participant would pay, paste a
    * valid UTR, and be told they had "already registered".
+   *
+   * The same trap used to be reachable WITHOUT a bundle: refresh at the UTR
+   * step, retype the details, and `done` was gone while the row was not. So the
+   * existence check happens BEFORE every insert, not only on the selection
+   * path.
    */
   async function finalize(utrValue) {
     if (saving) return;
@@ -302,11 +452,38 @@ export default function Register() {
       return;
     }
 
+    // Already registered under this email and it is MINE (RLS says so): continue
+    // that registration rather than failing to create a duplicate.
+    const existing = findMine(form.email);
+    if (existing) {
+      setDone(existing);
+      // Verified seats are settled: nothing to submit, nothing to ask the
+      // participant for. Saying "already registered" in red would be wrong —
+      // the registration is exactly what they came back for.
+      if (existing.payment_status === "verified" || utrValue == null) {
+        setSaving(false);
+        setStep("done");
+        return;
+      }
+      const { data, error: saveError } = await submitUtr(existing.id, utrValue);
+      setSaving(false);
+      if (saveError) {
+        setError(saveError);
+        return;
+      }
+      setDone(data);
+      setMine((current) => current.map((r) => (r.id === data.id ? data : r)));
+      setStep("done");
+      return;
+    }
+
     const { data, error: saveError } = await addRegistration({
       ...form,
       utr_number: utrValue,
       purchase_type: purchase?.type ?? null,
       purchase_label: purchase?.label ?? null,
+      purchase_ref: purchase?.ref ?? null,
+      eventFields: extra,
     });
 
     setSaving(false);
@@ -347,7 +524,21 @@ export default function Register() {
   function handleUtrSubmit(e) {
     e.preventDefault();
     setError("");
-    finalize(utr.trim());
+    // Enforced here rather than by the input's `required` attribute: the form
+    // carries `noValidate`, so native constraint validation never runs and a
+    // `required` field can be submitted empty. The details step validates the
+    // same way, through validateRegistration, so this keeps one approach rather
+    // than two that disagree.
+    const value = utr.trim();
+    if (!value) {
+      setError("Enter the UTR / UPI reference from your payment app before submitting.");
+      return;
+    }
+    if (!/^[A-Za-z0-9-]{6,30}$/.test(value)) {
+      setError("The UTR must be 6–30 letters, digits or dashes.");
+      return;
+    }
+    finalize(value);
   }
 
   // Load the participant's existing registrations once the session is real.
@@ -361,16 +552,26 @@ export default function Register() {
       return;
     }
     let alive = true;
-    listRegistrations().then(({ data, error: loadError }) => {
-      if (!alive) return;
-      if (!loadError) setMine(data ?? []);
+    listRegistrations().then(async ({ data, error: loadError }) => {
+      if (!alive || loadError) return;
+      const rows = data ?? [];
+      setMine(rows);
+
+      // ?resume=<id> — the profile page's "continue". Adopted from the ROW so
+      // the step it lands on is the step they actually stopped at, and only
+      // once (this effect re-runs if `mine` changes underneath it).
+      if (!resumeId || resumedRef.current === resumeId) return;
+      const target = rows.find((r) => r.id === resumeId);
+      if (!target) return;
+      resumedRef.current = resumeId;
+      await adopt(target);
     });
     return () => {
       alive = false;
     };
     // authReady is derived from the same two values and gates the early return;
     // listing it keeps the intent explicit without adding a second effect.
-  }, [signedIn, authReady]);
+  }, [signedIn, authReady, resumeId]);
 
   // The QR must encode the amount the DATABASE charged. Once a selection has
   // been saved that figure exists; before it, fall back to the price the
@@ -587,6 +788,37 @@ export default function Register() {
                     </div>
                   </div>
 
+                  {/* ---- event-specific inputs (FREE FIRE's in-game ID) ----
+                      Rendered from the catalogue, so an event that needs a
+                      rating or a handle gets it without a component change.
+                      `required` on the input is belt-and-braces: this form
+                      carries noValidate, so the real gate is
+                      validateEventFields (and the database trigger). */}
+                  {declaredFields.map((field) => (
+                    <div key={field.name}>
+                      <label className={labelClass} htmlFor={`reg-${field.name}`}>
+                        {field.label}
+                      </label>
+                      <input
+                        id={`reg-${field.name}`}
+                        name={field.name}
+                        data-event-field={field.name}
+                        required
+                        maxLength={field.maxLength ?? 32}
+                        value={extra[field.name] ?? ""}
+                        onChange={setExtraField(field.name)}
+                        className={fieldClass}
+                        placeholder={field.placeholder ?? ""}
+                        autoComplete="off"
+                      />
+                      {field.help ? (
+                        <p className="mt-2 text-[10px] leading-relaxed tracking-[0.14em] text-crystal/40">
+                          {field.help}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-5">
                     <Link
                       to={returnTo}
@@ -694,7 +926,7 @@ export default function Register() {
 
               {/* ---------------- step 3: UTR reference ---------------- */}
               {signedIn && step === "utr" ? (
-                <form id="reg-step-utr" onSubmit={submitUtr} noValidate className="flex flex-col gap-5">
+                <form id="reg-step-utr" onSubmit={handleUtrSubmit} noValidate className="flex flex-col gap-5">
                   <header>
                     <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 03</p>
                     <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
@@ -754,8 +986,16 @@ export default function Register() {
                   <p className="max-w-md text-sm leading-relaxed text-crystal/60">
                     {done.name} · {done.email} ·{" "}
                     {done.utr_number ? `UTR ${done.utr_number}` : "no payment due"}
-                    . Your entry is waiting for admin verification — watch your
-                    email for confirmation.
+                    .{" "}
+                    {/* The panel is the same one an adopted registration lands
+                        on, so it has to be true for a row in ANY state — it used
+                        to promise "waiting for admin verification" even for a
+                        seat that was already verified. */}
+                    {done.payment_status === "verified"
+                      ? "Payment verified — your seat is confirmed."
+                      : done.payment_status === "rejected"
+                        ? "The reference could not be matched — send a new one below."
+                        : "Your entry is waiting for admin verification — watch your email for confirmation."}
                   </p>
                   <p
                     id="reg-sync"

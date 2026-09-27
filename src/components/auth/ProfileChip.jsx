@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 
 /**
@@ -64,6 +65,15 @@ export default function ProfileChip({ variant = "inline", className = "" }) {
             ) : null}
           </span>
         </div>
+        {/* The identity is the way into the account page — a separate small link
+            would be one more thing to miss on a phone. */}
+        <Link
+          to="/profile"
+          data-nav="profile"
+          className="mt-6 inline-flex w-full items-center justify-center border border-lavender/30 px-6 py-3.5 text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/75 transition-colors duration-300 hover:border-lavender hover:text-crystal"
+        >
+          My profile
+        </Link>
         <button
           type="button"
           onClick={handleSignOut}
@@ -78,19 +88,29 @@ export default function ProfileChip({ variant = "inline", className = "" }) {
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>
-      {avatar}
-      {/* min-w-0 + truncate: a long Google display name must never widen the
-          fixed navbar (the verify suite fails any horizontal overflow). */}
-      <span className="hidden min-w-0 flex-col md:flex">
-        <span className="max-w-[10rem] truncate text-[10px] font-medium uppercase tracking-[0.28em] text-crystal/80">
-          {name}
-        </span>
-        {email ? (
-          <span className="max-w-[10rem] truncate text-[9px] tracking-[0.16em] text-crystal/40">
-            {email}
+      {/* The identity itself is the link to the account page: it is the control
+          a participant already looks for, and it keeps the navbar to one target
+          instead of avatar + name + separate "profile" word. */}
+      <Link
+        to="/profile"
+        data-nav="profile"
+        aria-label="Your profile"
+        className="flex min-w-0 items-center gap-3"
+      >
+        {avatar}
+        {/* min-w-0 + truncate: a long Google display name must never widen the
+            fixed navbar (the verify suite fails any horizontal overflow). */}
+        <span className="hidden min-w-0 flex-col md:flex">
+          <span className="max-w-[10rem] truncate text-[10px] font-medium uppercase tracking-[0.28em] text-crystal/80">
+            {name}
           </span>
-        ) : null}
-      </span>
+          {email ? (
+            <span className="max-w-[10rem] truncate text-[9px] tracking-[0.16em] text-crystal/40">
+              {email}
+            </span>
+          ) : null}
+        </span>
+      </Link>
       <button
         type="button"
         onClick={handleSignOut}

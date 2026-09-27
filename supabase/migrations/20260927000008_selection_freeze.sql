@@ -428,6 +428,7 @@ returns table (
   purchase_label   text,
   purchase_amount  integer,
   events           text,
+  free_fire_id     text,
   selection_frozen boolean,
   frozen_by        text,
   created_at_utc   timestamptz
@@ -463,6 +464,7 @@ begin
     select r.id, r.name, r.phone_number, r.utr_number, r.created_at, r.email,
            r.college_name, r.roll_number, r.year, r.department,
            r.payment_status::text, r.purchase_label, r.purchase_amount,
+           r.free_fire_id,
            r.selection_frozen, r.selection_frozen_by,
            (select string_agg(re.event_id, ', ' order by re.event_id)
               from public.registration_events re
@@ -494,6 +496,7 @@ begin
          (f.created_at at time zone 'Asia/Kolkata')::time,
          f.email, f.college_name, f.roll_number, f.year, f.department,
          f.payment_status, f.purchase_label, f.purchase_amount, f.events,
+         f.free_fire_id,
          f.selection_frozen, f.selection_frozen_by,
          f.created_at
     from filtered f;

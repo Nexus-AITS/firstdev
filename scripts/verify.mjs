@@ -23,6 +23,7 @@ const ROUTES = [
   ["/ai", "THE NEXUS"],
   ["/about", "EVERYTHING"],
   ["/register", "EVENT REGISTER"],
+  ["/profile", "YOUR ACCOUNT"], // participant account, gated like /register
   ["/gateway", "EVENT REGISTER"], // legacy hand-off redirects into /register
   ["/bundled", "BUNDLED"],
   ["/nexus-admin", "Staff sign in"], // console gate: heading is the sign-in prompt
@@ -210,31 +211,34 @@ for (const vp of VIEWPORTS) {
   const soloPrice = await page.getByText("₹149 · INDIVIDUAL").count();
   out(soloPrice >= 4, "paradox list shows individual pricing", `count=${soloPrice}`);
 
-  /* payment: 0 — a free entry must read FREE, never render a stray ₹0 */
+  /* FREE FIRE is a PAID, ranked event: ₹149 per person, because it is scored
+   * on the player's in-game account. It used to be checked as a free entry —
+   * and when the catalogue said `payment: 0` while the database said 149, the
+   * page quietly charged for a "free" event. The two now have to agree on a
+   * price, so the assertion is that the price is shown, not that it is absent. */
   await page.goto(BASE + "/events/free-fire", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const freeCell = await page.getByText("FREE", { exact: true }).count();
-  const freeRupee = await page.getByText("₹0", { exact: true }).count();
-  out(
-    freeCell >= 1 && freeRupee === 0,
-    "free event renders FREE (no stray ₹0)",
-    `free=${freeCell} rupeeZero=${freeRupee}`
-  );
+  const ffFee = await page.getByText("₹149", { exact: true }).count();
+  const ffFree = await page.getByText("FREE", { exact: true }).count();
+  const ffLogo = await page.locator('[data-event-logo="free-fire"]').count();
+  out(ffFee >= 1, "FREE FIRE shows its ₹149 entry fee", `count=${ffFee}`);
+  out(ffFree === 0, "FREE FIRE never renders as a free entry", `free=${ffFree}`);
+  out(ffLogo === 1, "FREE FIRE renders its logo on the event page", `logos=${ffLogo}`);
 
-  // …and its wizard must offer two steps only: no fee strip, no QR/UTR copy.
+  // …and its wizard is a paid one: fee strip, four steps, QR/UTR copy.
   await page.goto(BASE + "/register?event=free-fire", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
   // The stepper is hidden while signed out, so the step COUNT is read from the
   // rendered list rather than its visibility.
-  const freeSteps = await page
+  const ffSteps = await page
     .locator('ol[aria-label="Registration progress"] li')
     .count();
-  const feeStrip = await page.getByText("entry fee", { exact: true }).count();
-  const qrCopy = await page.getByText("pay with the QR below").count();
+  const ffFeeStrip = await page.getByText("entry fee", { exact: true }).count();
+  const ffQrCopy = await page.getByText("pay with the QR below").count();
   out(
-    freeSteps === 2 && feeStrip === 0 && qrCopy === 0,
-    "free event wizard skips payment (2 steps, no QR/UTR)",
-    `steps=${freeSteps} feeStrip=${feeStrip} qrCopy=${qrCopy}`
+    ffSteps === 4 && ffFeeStrip >= 1 && ffQrCopy >= 1,
+    "FREE FIRE wizard charges (4 steps, fee strip, QR/UTR)",
+    `steps=${ffSteps} feeStrip=${ffFeeStrip} qrCopy=${ffQrCopy}`
   );
 
   await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });

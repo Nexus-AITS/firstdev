@@ -26,6 +26,7 @@ const Bundled = lazy(() => import("./pages/Bundled.jsx"));
 const Admin = lazy(() => import("./pages/Admin.jsx"));
 const Gateway = lazy(() => import("./pages/Gateway.jsx"));
 const Register = lazy(() => import("./pages/Register.jsx"));
+const Profile = lazy(() => import("./pages/Profile.jsx"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback.jsx"));
 const NexusAI = lazy(() => import("./pages/NexusAI.jsx"));
 const About = lazy(() => import("./pages/About.jsx"));
@@ -92,6 +93,11 @@ export default function App() {
               <Route path="/admin123456789" element={<Navigate to="/nexus-admin" replace />} />
               <Route path="/gateway" element={<Gateway />} />
               <Route path="/register" element={<Register />} />
+              {/* The participant's own account: identity, editable details, and
+                  every registration with the step it stopped at. Gated inside
+                  the page the same way /register is — a signed-out visitor gets
+                  the sign-in action, never someone else's data. */}
+              <Route path="/profile" element={<Profile />} />
               <Route path="/auth/callback" element={<AuthCallback />} />
               <Route path="/ai" element={<NexusAI />} />
               <Route path="/about" element={<About />} />

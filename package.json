@@ -36,6 +36,8 @@
     "verify:selection": "node scripts/verify-selection.mjs",
     "verify:catalogue": "node scripts/verify-catalogue.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
+    "verify:profile": "node scripts/verify-profile.mjs",
+    "verify:register": "node scripts/verify-register.mjs",
     "db:query": "node scripts/db-query.mjs",
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
     "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap"

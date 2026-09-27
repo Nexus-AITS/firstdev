@@ -244,12 +244,33 @@ export const events = [
     date: "OCT 5 — 6, 2026 · AFTER COLLEGE HOURS",
     venue: "THE ARENA — MAIN STAGE",
     teamSize: "SQUAD OF 4",
-    payment: 0,
+    payment: 149,
     maxSize: 4,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "squad",
     linkKey: "freeFire",
+    // A recognisable mark for the event. `logo` points at a file served from
+    // this origin, so it works under the existing CSP (img-src 'self') — see
+    // src/components/event/EventLogo.jsx for why that matters, and for how to
+    // swap in an official asset without touching a component.
+    logo: "free-fire",
+    // An event-specific input the registration form must collect.
+    //
+    // Not decoration: a Free Fire ID is what the operations team checks a
+    // player against their in-game account at the match and scores on, so a
+    // blank one is a participant who cannot be entered into the lobby. Enforced
+    // in the form here and, as the authority, by migration …011 — a client-side
+    // rule alone would be bypassed by anyone posting to the REST API directly.
+    fields: [
+      {
+        name: "free_fire_id",
+        label: "Free Fire ID",
+        placeholder: "e.g. 2831945712",
+        help: "Open Free Fire → your profile → the number under your name. It is checked at the match.",
+        maxLength: 32,
+      },
+    ],
   },
 ];
 
@@ -259,6 +280,24 @@ export function getEventById(id) {
 
 export function getEventsByRealm(realmId) {
   return events.filter((event) => event.realm === realmId);
+}
+
+/**
+ * The event-specific inputs a registration for this event must collect.
+ *
+ * Read through this rather than hardcoding `free_fire_id` in the wizard: the
+ * next event that needs something (a chess rating, a roll for a track) adds it
+ * to its own entry here, and the form, the database check and the roster all
+ * follow the same declaration. Always an array — callers must not assume the
+ * field exists.
+ */
+export function getEventFields(id) {
+  return getEventById(id)?.fields ?? [];
+}
+
+/** The event's logo file name (without a path), or null. */
+export function getEventLogo(id) {
+  return getEventById(id)?.logo ?? null;
 }
 
 /** Human label for a max team size — "5" -> "MAX SIZE 5". */

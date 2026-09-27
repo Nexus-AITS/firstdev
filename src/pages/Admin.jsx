@@ -736,6 +736,17 @@ function RosterTab({
                 <p className="mt-1 font-mono text-xs text-ash">
                   UTR: {r.utr_number || "—"} · submitted {when(r.utr_submitted_at)}
                 </p>
+                {/* Shown only when the row carries one. FREE FIRE is scored on
+                    the in-game ID, and a reconciler needs it on screen — not in
+                    a spreadsheet they have to open separately. */}
+                {r.free_fire_id ? (
+                  <p
+                    className="mt-1 font-mono text-xs text-gold"
+                    data-free-fire-id="true"
+                  >
+                    Free Fire ID: {r.free_fire_id}
+                  </p>
+                ) : null}
                 <p className="mt-1 font-mono text-xs text-ash">
                   Registered {when(r.created_at)}
                   {r.user_id ? "" : " · no owner linked yet"}

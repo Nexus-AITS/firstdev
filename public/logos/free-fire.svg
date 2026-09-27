@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 200" role="img" aria-label="Free Fire">
+  <!--
+    NEXUS' own wordmark for the FREE FIRE event. Drawn here rather than copied:
+    the game's logo is Garena's copyright, and shipping a copy of it in this repo
+    is not ours to do. This is an original mark in the site's visual language
+    (crystal violet + gold, angled plate, bracket frame) and it exists to make
+    the event recognisable at a glance.
+  -->
+  <defs>
+    <linearGradient id="ff-plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a0b2e" />
+      <stop offset="0.55" stop-color="#2b0f4a" />
+      <stop offset="1" stop-color="#0a0514" />
+    </linearGradient>
+    <linearGradient id="ff-fire" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd98a" />
+      <stop offset="0.55" stop-color="#f5a623" />
+      <stop offset="1" stop-color="#e2452f" />
+    </linearGradient>
+    <linearGradient id="ff-edge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#a855f7" />
+      <stop offset="1" stop-color="#f5d78e" stop-opacity="0.2" />
+    </linearGradient>
+  </defs>
+
+  <rect x="6" y="18" width="408" height="164" rx="6" fill="url(#ff-plate)" />
+  <rect x="6" y="18" width="408" height="164" rx="6" fill="none" stroke="url(#ff-edge)" stroke-width="2" />
+  <path d="M6 140 L70 18 L104 18 L40 140 Z" fill="#a855f7" opacity="0.16" />
+  <path d="M250 182 L316 18 L350 18 L284 182 Z" fill="#f5d78e" opacity="0.08" />
+
+  <!-- reticle: the game is a battle royale, and the site's Arena realm is a lobby -->
+  <g stroke="#d8b4fe" stroke-opacity="0.55" fill="none" stroke-width="2">
+    <circle cx="352" cy="52" r="20" />
+    <circle cx="352" cy="52" r="7" />
+    <path d="M332 52h-10M372 52h10M352 32v-10M352 72v10" />
+  </g>
+
+  <text x="34" y="96" font-family="Impact, 'Arial Black', sans-serif" font-size="58"
+        letter-spacing="4" fill="none" stroke="#d8b4fe" stroke-width="2">FREE</text>
+  <text x="186" y="96" font-family="Impact, 'Arial Black', sans-serif" font-size="58"
+        letter-spacing="4" fill="url(#ff-fire)">FIRE</text>
+
+  <!-- Sized to FIT: at 15px with 7px tracking this line ran past the plate's
+       right edge and the "4" was clipped. 12px/4.5 lands at ~320 of 420. -->
+  <text x="35" y="132" font-family="Helvetica, Arial, sans-serif" font-size="12"
+        letter-spacing="4.5" fill="#c9b6e8">BATTLE ROYALE · SQUAD OF 4</text>
+  <text x="35" y="160" font-family="Helvetica, Arial, sans-serif" font-size="11"
+        letter-spacing="4" fill="#8a7aa8">NEXUS '65 — THE ARENA</text>
+</svg>

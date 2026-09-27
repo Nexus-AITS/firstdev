@@ -338,6 +338,7 @@ export function buildRosterWorkbook(rows, scope) {
     { header: "PURCHASE", width: 32 },
     { header: "AMOUNT", width: 11, type: "number" },
     { header: "EVENTS", width: 34 },
+    { header: "FREE FIRE ID", width: 18 },
     { header: "FINAL", width: 8 },
     { header: "FROZEN BY", width: 16 },
     { header: "EMAIL", width: 28 },
@@ -361,6 +362,9 @@ export function buildRosterWorkbook(rows, scope) {
     // empty string here would reintroduce the text-in-a-number-column problem.
     r.purchase_amount == null ? 0 : Number(r.purchase_amount),
     r.events,
+    // Only FREE FIRE rows have one; the column is blank for everything else so
+    // the sheet stays a fixed shape and an operator can scan it.
+    r.free_fire_id ?? "",
     // "YES"/"" rather than true/false: this column is read by a person
     // reconciling a payment, and a blank is easier to scan past than the word
     // FALSE on every one of four hundred open rows.

@@ -279,9 +279,19 @@ revoke execute on function public.registration_set_events(uuid, text, text[]) fr
 -- timestamptz, so that overload is dropped BEFORE the new one is created —
 -- PostgREST resolves an RPC by name and argument count, and two four-argument
 -- versions of this name would make every call that passed nulls ambiguous.
+--
+-- The DROP also covers the CURRENT shape, and that one is about re-runnability:
+-- migration …008 widens this result table with `selection_frozen` and
+-- `frozen_by`, and Postgres refuses `create or replace` when the OUT row type
+-- changes ("cannot change return type of existing function"). So this
+-- migration drops and recreates, …008 does the same, and whichever runs last
+-- wins — which is the intended order, since …008 is the one that knows about
+-- the freeze columns. The grant at the end of this file is re-issued on the
+-- fresh function, and …008 re-issues it again.
 drop function if exists public.staff_export_registrations(timestamptz, timestamptz, text, text);
+drop function if exists public.staff_export_registrations(date, date, text, text);
 
-create or replace function public.staff_export_registrations (
+create function public.staff_export_registrations (
   p_from_date date default null,   -- inclusive, whole day, Asia/Kolkata
   p_to_date   date default null,   -- inclusive, whole day, Asia/Kolkata
   p_event     text default null,
@@ -303,6 +313,7 @@ returns table (
   purchase_label  text,
   purchase_amount integer,
   events          text,
+  free_fire_id    text,
   created_at_utc  timestamptz
 )
 language plpgsql
@@ -345,6 +356,7 @@ begin
     select r.id, r.name, r.phone_number, r.utr_number, r.created_at, r.email,
            r.college_name, r.roll_number, r.year, r.department,
            r.payment_status::text, r.purchase_label, r.purchase_amount,
+           r.free_fire_id,
            (select string_agg(re.event_id, ', ' order by re.event_id)
               from public.registration_events re
              where re.registration_id = r.id) as events
@@ -376,7 +388,7 @@ begin
          (f.created_at at time zone 'Asia/Kolkata')::time,
          f.email, f.college_name, f.roll_number, f.year, f.department,
          f.payment_status, f.purchase_label, f.purchase_amount, f.events,
-         f.created_at
+         f.free_fire_id, f.created_at
     from filtered f;
 end;
 $$;

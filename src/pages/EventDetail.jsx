@@ -4,6 +4,7 @@ import Reveal from "../components/ui/Reveal.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
 import RealmFX from "../components/fx/RealmFX.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
+import EventLogo from "../components/event/EventLogo.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
 import NotFound from "./NotFound.jsx";
 import { formatEventFee, getEventById, getEventFee, formatMaxSize } from "../data/events.js";
@@ -67,6 +68,20 @@ export default function EventDetail() {
                 {event.title}
               </h1>
             </Reveal>
+
+            {/* A game event is recognised by its mark, not just its name, so an
+                event that declares a logo gets it directly under the title. */}
+            {event.logo ? (
+              <Reveal delay={0.14}>
+                <div className="mt-7 flex justify-center md:justify-start">
+                  <EventLogo
+                    logo={event.logo}
+                    title={event.title}
+                    className="w-[min(88%,420px)]"
+                  />
+                </div>
+              </Reveal>
+            ) : null}
 
             <Reveal delay={0.2}>
               <p className="mt-6 whitespace-pre-line font-display text-[clamp(1.15rem,2.4vw,1.9rem)] italic leading-snug tracking-[0.08em] text-lavender">

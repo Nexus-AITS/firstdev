@@ -23,6 +23,7 @@
  * React event handler is exactly the unhandled rejection that blanks a route.
  */
 import { getAuthClient } from "../config/supabase.js";
+import { getEventFields } from "./events.js";
 
 /** PostgREST error codes worth translating into something a human can act on. */
 const UNIQUE_VIOLATION = "23505";
@@ -248,7 +249,46 @@ export function validateRegistration(v) {
   return null;
 }
 
+/**
+ * The event-specific inputs this purchase must carry.
+ *
+ * Same rules as the database trigger, and for the same reason: the trigger
+ * (migration …011) is the authority, this is the round trip saved and the
+ * message written in the participant's own language.
+ *
+ * Driven entirely by what the catalogue declares for the event, so adding a
+ * field to events.js needs no change here.
+ */
+export function validateEventFields(purchaseRef, values) {
+  for (const field of getEventFields(purchaseRef)) {
+    const value = String(values?.[field.name] ?? "").trim();
+    if (!value) {
+      return `${field.label} is required for this event.`;
+    }
+    const max = field.maxLength ?? 32;
+    if (value.length > max) {
+      return `${field.label} must be ${max} characters or fewer.`;
+    }
+  }
+  return null;
+}
 
+
+
+/**
+ * Copy the catalogue's declared event inputs onto a row.
+ *
+ * Driven by `getEventFields(purchaseRef)` rather than by the keys the caller
+ * sent, so an arbitrary key in the payload can never become a column — the
+ * caller asks for a value, the catalogue decides which values exist.
+ */
+function declaredEventFieldValues(purchaseRef, values) {
+  const out = {};
+  for (const field of getEventFields(purchaseRef)) {
+    out[field.name] = String(values?.[field.name] ?? "").trim() || null;
+  }
+  return out;
+}
 
 /**
  * Record a completed /register wizard submission.
@@ -290,6 +330,13 @@ export async function addRegistration(input) {
     utr_number: hasUtr ? String(input.utr_number).trim() : null,
     purchase_type: input.purchase_type ?? null,
     purchase_label: input.purchase_label ?? null,
+    // The catalogue id (?event= / ?bundle=), so the profile page can hand the
+    // participant back to this exact wizard. Nullable by design: the column is
+    // new, and a null here simply means "no resume target" rather than a
+    // guessed one.
+    purchase_ref: input.purchase_ref ?? null,
+    // Event-specific inputs, e.g. the in-game Free Fire ID.
+    ...declaredEventFieldValues(input.purchase_ref, input.eventFields),
   };
 
   // .select() asks PostgREST to return the stored row (with id and the
@@ -348,4 +395,62 @@ export async function submitUtr(id, utr) {
     return { data: null, error: "That registration is no longer available." };
   }
   return { data, error: null };
+}
+
+/* ---------- resume + profile reads ---------- */
+
+/**
+ * The events one of the caller's registrations covers.
+ *
+ * Needed to answer "has this participant already made their choice?", which is
+ * what decides whether resuming a bundle registration lands on the selection
+ * step or goes straight to the QR. RLS scopes it: participant_read_own_events
+ * only admits a row whose registration belongs to the signed-in user, so this
+ * can never read someone else's picks by guessing a registration id.
+ */
+export async function listRegistrationEvents(registrationId) {
+  const { supabase, error } = await client();
+  if (error) return { data: [], error };
+
+  const { data, error: queryError } = await supabase
+    .from("registration_events")
+    .select("event_id")
+    .eq("registration_id", registrationId)
+    .order("event_id");
+
+  if (queryError) {
+    return { data: [], error: explain(queryError, "Could not load your selected events") };
+  }
+  return { data: data ?? [], error: null };
+}
+
+/**
+ * The participant's own registrations WITH their selected events, in one query.
+ *
+ * Used by the profile page. The embedded join is a left join rather than
+ * `!inner`: a registration with no selection yet (a single event, or a bundle
+ * whose choice was never made) is exactly the row the page must show, and an
+ * inner join would hide it — silently making a half-finished registration
+ * invisible on the very screen that exists to resume it.
+ */
+export async function listMyRegistrationsDetailed() {
+  const { supabase, error } = await client();
+  if (error) return { data: [], error };
+
+  const { data, error: queryError } = await supabase
+    .from("registrations")
+    .select("*, registration_events(event_id)")
+    .order("created_at", { ascending: false });
+
+  if (queryError) {
+    return { data: [], error: explain(queryError, "Could not load your registrations") };
+  }
+  // Flatten the embed to a plain `events` array so the page never has to know
+  // PostgREST's response shape, and so an absent embed is [] rather than null.
+  const rows = (data ?? []).map((row) => ({
+    ...row,
+    events: (row.registration_events ?? []).map((line) => line.event_id),
+    registration_events: undefined,
+  }));
+  return { data: rows, error: null };
 }
