@@ -34,23 +34,42 @@ function readIdentity(user) {
  */
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
-  const [status, setStatus] = useState(isAuthConfigured ? "loading" : "signed_out");
+  // Tri-state on purpose. "loading" now covers BOTH the stored-session resolve
+  // and the runtime config fetch (the credentials arrive over the network), so
+  // the navbar holds the pulsing diamond until it knows whether this deployment
+  // has an identity provider at all — instead of flashing SIGN IN and then
+  // retracting it when the config turns out to be unavailable.
+  const [status, setStatus] = useState("loading");
   const [error, setError] = useState(null);
+  // false until the config resolves; every auth surface hides itself while it is
+  // null so an unconfigured deployment renders exactly like the pre-auth site.
+  const [configured, setConfigured] = useState(null);
   // Populated by the async client chunk; every call site guards on it, and the
   // controls that need it are disabled while status is still "loading".
   const [client, setClient] = useState(null);
 
   useEffect(() => {
-    if (!isAuthConfigured) return undefined;
     let alive = true;
     let unsubscribe = null;
 
-    createAuthClient()
-      .then((supabase) => {
+    isAuthConfigured()
+      .then((ok) => {
         if (!alive) return undefined;
+        setConfigured(ok);
+        // No credentials: settle as signed out and stop — there is no client to
+        // build, and the surfaces already render their "unavailable" state.
+        if (!ok) {
+          setStatus("signed_out");
+          return undefined;
+        }
+        return createAuthClient();
+      })
+      .then((supabase) => {
+        if (!alive || supabase === undefined) return undefined;
         if (!supabase) {
-          // createAuthClient returns null on a malformed URL — report unsigned
+          // Config was present but the client failed to build — report unsigned
           // rather than leaving the navbar spinner running forever.
+          setConfigured(false);
           setStatus((s) => (s === "loading" ? "signed_out" : s));
           return undefined;
         }
@@ -109,7 +128,7 @@ export function AuthProvider({ children }) {
   const signInWithGoogle = useCallback(async () => {
     // `client` is null until the async chunk resolves; the controls that call
     // this are disabled while status is "loading", so this is belt-and-braces.
-    if (!isAuthConfigured || !client) {
+    if (!client) {
       setError("Google sign-in is not configured for this deployment.");
       return;
     }
@@ -148,14 +167,20 @@ export function AuthProvider({ children }) {
       user: session?.user ?? null,
       status,
       signedIn: status === "signed_in",
-      configured: isAuthConfigured,
+      // `configured === null` means the runtime config is still in flight. Every
+      // surface treats that as "not yet", so nothing renders an auth control it
+      // might have to take back a frame later.
+      configured: configured === true,
+      // Exposed so AuthCallback can hold its "verifying" state while the config
+      // resolves, instead of declaring the exchange refused too early.
+      configPending: configured === null,
       error,
       clearError,
       signInWithGoogle,
       signOut,
       ...identity,
     }),
-    [session, status, error, clearError, signInWithGoogle, signOut, identity]
+    [session, status, configured, error, clearError, signInWithGoogle, signOut, identity]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

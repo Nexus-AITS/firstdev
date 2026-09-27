@@ -30,14 +30,14 @@ const env = loadEnv(new URL("../.env", import.meta.url));
 const token = process.env.SUPABASE_ACCESS_TOKEN || env.SUPABASE_ACCESS_TOKEN;
 // process.env wins so CI — or a failure-path self-test — can point the script
 // at another endpoint without editing .env (same precedence the token uses).
-const supabaseUrl = (process.env.VITE_SUPABASE_URL || env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
+const supabaseUrl = (process.env.SUPABASE_URL || env.SUPABASE_URL || "").replace(/\/+$/, "");
 
 if (!token) {
   console.error("FAIL: SUPABASE_ACCESS_TOKEN (sbp_…) missing — add it to .env");
   process.exit(1);
 }
 if (!supabaseUrl) {
-  console.error("FAIL: VITE_SUPABASE_URL missing from .env");
+  console.error("FAIL: SUPABASE_URL missing from .env");
   process.exit(1);
 }
 const ref = new URL(supabaseUrl).hostname.split(".")[0];

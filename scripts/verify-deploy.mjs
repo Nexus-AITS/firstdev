@@ -10,14 +10,16 @@
  *     alternatives, not a pair: only vercel.json is honoured on Vercel, only
  *     _redirects on Netlify / Cloudflare Pages — so both are checked.
  *
- *  2. CSP origin — connect-src must allow the Supabase project. vite.config.js
- *     derives the origin from VITE_SUPABASE_URL, but public/_headers and
- *     vercel.json cannot read env vars and hardcode it; changing the Supabase
- *     project then silently blocks every auth request in the browser.
+ *  2. Runtime config — the browser fetches /api/config (api/config.js) for its
+ *     Supabase credentials, so the catch-all SPA rewrite must NOT swallow /api/*.
+ *     A rewrite that captured it would return index.html to fetch(), the config
+ *     would parse as null, and auth would die with no error anywhere. The CSP
+ *     `connect-src` must also allow the Supabase wildcard.
  *
- *  3. Secret hygiene — anything carrying a VITE_ prefix is inlined into the
- *     public bundle, so no PAT (sbp_…), service-role key or database
- *     connection string may wear one.
+ *  3. Secret hygiene — no VITE_ prefix may survive (that prefix is what inlines
+ *     a value into the public bundle), and the values /api/config hands the
+ *     browser must be publishable: no PAT (sbp_…), service-role key or database
+ *     connection string.
  *
  *  4. .env must be gitignored and untracked (it holds the anon key and,
  *     locally, the PAT).
@@ -97,14 +99,51 @@ try {
 if (vercel) {
   const spaRewrites = (vercel.rewrites ?? []).filter((rw) => rw.destination === "/index.html");
 
-  /** Vercel sources are path-to-regexp; ours is the catch-all "/(.*)". */
+  function sourceToRegExp(src) {
+    // The rewrite is "/((?!api/).*)" — a catch-all that excludes /api/* so the
+    // runtime-config function stays reachable. Two traps make a naive
+    // translation wrong, and both yield a FALSE NEGATIVE (every route reported
+    // as uncovered) rather than a false pass:
+    //   1. escaping the source wholesale turns "(?!api/)" into a literal that
+    //      matches nothing, so the lookahead must survive as a lookahead;
+    //   2. translated literally the lookahead sits INSIDE the group and is
+    //      evaluated after the leading slash, rejecting the bare root "/".
+    // Vercel applies the exclusion to the path as a whole, so: root and every
+    // normal route match, /api/... does not.
+    const m = /^\/\(\(\?!(\/?[^)]*)\)\.\*\)$/.exec(src);
+    if (m) return new RegExp("^/(?!" + m[1] + ").*$");
+    // Any other shape: walk it, keeping lookaheads intact.
+    let out = "";
+    let i = 0;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === "(" && src.startsWith("(?!", i)) {
+        const close = src.indexOf(")", i);
+        if (close === -1) break;
+        out += "(?!" + src.slice(i + 3, close) + ")";
+        i = close + 1;
+      } else if (ch === "*") {
+        out += ".*";
+        i += 1;
+      } else if (ch === ".") {
+        // ".*" is a wildcard, not a literal dot plus a quantifier.
+        out += src[i + 1] === "*" ? "." : "\\.";
+        i += 1;
+      } else if (ch === "(" || ch === ")" || ch === "/") {
+        out += ch;
+        i += 1;
+      } else {
+        out += ch.replace(/[+?^${}|[\]\\]/, "\\$&");
+        i += 1;
+      }
+    }
+    return new RegExp("^" + out + "$");
+  }
   function rewritesMatch(rw, route) {
     const src = rw.source ?? "";
     if (src === "/(.*)" || src === "*" || src === "/*") return true;
-    const rx = new RegExp(
-      `^${src.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`
-    );
-    return rx.test(route);
+    if (/^\/api(\/|$)/.test(route)) return false; // never rewritten to the SPA
+    return sourceToRegExp(src).test(route);
   }
 
   const missingRewrite = routes.filter(
@@ -121,36 +160,48 @@ if (vercel) {
   );
 }
 
-/* ---------- 2) CSP origin is in sync ---------- */
+/* ---------- 2) runtime config: /api/* must survive the SPA rewrite ---------- */
 
 const envPath = path(".env");
 const envVars = loadEnv(envPath);
 // Fall back to .env.example so a fresh clone / CI still exercises this check.
 const vars = envVars ?? loadEnv(path(".env.example")) ?? {};
 
-let origin = null;
-try {
-  origin = new URL(vars.VITE_SUPABASE_URL).origin;
-} catch {
-  origin = null;
-}
-
-if (!origin) {
-  out(true, "CSP origin sync", "skipped — no VITE_SUPABASE_URL in .env or .env.example");
-} else {
+// The rewrite must exclude /api/ or the config endpoint is unreachable. This is
+// the highest-value check in the file: getting it wrong produces a green deploy
+// with completely dead auth and no error message anywhere.
+if (vercel) {
+  const spaRewrites = (vercel.rewrites ?? []).filter((rw) => rw.destination === "/index.html");
+  const capturesApi = spaRewrites.some((rw) => {
+    const src = rw.source ?? "";
+    if (src === "/(.*)" || src === "*" || src === "/*") return true;
+    // A negative lookahead like /((?!api/).*) is the correct exclusion.
+    return !/\(\?!api\//.test(src);
+  });
   out(
-    read("public/_headers").includes(origin),
-    "public/_headers CSP allows the Supabase origin",
-    origin
-  );
-  out(
-    read("vercel.json").includes(origin),
-    "vercel.json CSP allows the Supabase origin",
-    origin
+    !capturesApi,
+    "vercel.json rewrite excludes /api/ (runtime config reachable)",
+    capturesApi ? "the catch-all would rewrite /api/config to index.html" : "excluded"
   );
 }
 
-/* ---------- 3) no secret may carry a VITE_ prefix ---------- */
+// The CSP must permit the Supabase origin the runtime config will hand out.
+for (const file of ["public/_headers", "vercel.json"]) {
+  out(
+    read(file).includes("https://*.supabase.co"),
+    `${file} CSP allows the Supabase origin`,
+    "connect-src https://*.supabase.co"
+  );
+}
+
+// The function itself must exist, or there is nothing to fetch.
+out(
+  existsSync(path("api/config.js")),
+  "api/config.js exists",
+  existsSync(path("api/config.js")) ? "" : "runtime config endpoint is missing"
+);
+
+/* ---------- 3) no VITE_ prefix, and no secret in what /api/config serves ---------- */
 
 const SECRET_PATTERNS = [
   [/\bsbp_[A-Za-z0-9_-]+/, "Supabase access token (sbp_…)"],
@@ -158,14 +209,35 @@ const SECRET_PATTERNS = [
   [/postgres(ql)?:\/\//i, "database connection string"],
 ];
 
+// A VITE_ prefix is now a bug, not a convention: it makes Vite inline the value
+// into the public bundle, which is exactly the coupling /api/config removes.
 const viteKeys = Object.keys(vars).filter((k) => k.startsWith("VITE_"));
-if (viteKeys.length === 0) {
-  out(true, "VITE_ secret scan", "skipped — no VITE_ vars found");
+out(
+  viteKeys.length === 0,
+  "no VITE_-prefixed vars remain",
+  viteKeys.length ? `still inlining into the bundle: ${viteKeys.join(", ")}` : "runtime config only"
+);
+
+// Whatever /api/config hands the browser must be publishable, never privileged.
+for (const key of ["SUPABASE_ANON_KEY"]) {
+  if (!(key in vars)) continue;
+  const hit = SECRET_PATTERNS.find(([rx]) => rx.test(vars[key]));
+  out(!hit, `${key} carries no secret`, hit ? hit[1] : "");
 }
-for (const key of viteKeys) {
-  const hit = SECRET_PATTERNS.find(([rx]) => rx.test(key) || rx.test(vars[key]));
-  out(!hit, `VITE_ var "${key}" carries no secret`, hit ? hit[1] : "");
+
+// The endpoint must read the server-side names, not a prefixed one.
+const apiConfig = read("api/config.js");
+for (const name of ["SUPABASE_URL", "SUPABASE_ANON_KEY"]) {
+  out(
+    apiConfig.includes(`process.env.${name}`),
+    `api/config.js reads ${name} from the server environment`
+  );
 }
+out(
+  !/process\.env\.VITE_/.test(apiConfig),
+  "api/config.js reads no VITE_-prefixed variable",
+  /process\.env\.VITE_/.test(apiConfig) ? "a prefixed var would still be inlined" : ""
+);
 
 /* ---------- 4) .env stays out of the repo ---------- */
 

@@ -38,13 +38,16 @@ function ThresholdPulse() {
  */
 export default function AuthCallback() {
   const navigate = useNavigate();
-  const { signedIn, configured } = useAuth();
+  const { signedIn, configured, configPending } = useAuth();
   // Read once on mount: Supabase rewrites the URL as soon as the exchange
   // resolves, so a later read would find it already cleaned.
   const [redirectError] = useState(() => readAuthRedirectError());
   const [timedOut, setTimedOut] = useState(false);
 
   // Only arm the watchdog while an exchange could plausibly still be running.
+  // configPending is excluded: the credentials are fetched at runtime now, so
+  // the exchange cannot even START until the config resolves. Arming the timer
+  // during that window would report a refused sign-in for a healthy deployment.
   useEffect(() => {
     if (!configured || signedIn || redirectError) return undefined;
     const id = setTimeout(() => setTimedOut(true), EXCHANGE_TIMEOUT_MS);
@@ -59,9 +62,13 @@ export default function AuthCallback() {
     return () => clearTimeout(id);
   }, [signedIn, navigate]);
 
-  const failed = !configured || Boolean(redirectError) || (timedOut && !signedIn);
+  // configPending means the runtime config has not answered yet. Treat it as
+  // "still verifying" so a healthy deployment never flashes SIGN-IN UNAVAILABLE
+  // during the fetch — only a config that actually resolved to absent does.
+  const unavailable = !configured && !configPending;
+  const failed = unavailable || Boolean(redirectError) || (timedOut && !signedIn);
 
-  const message = !configured
+  const message = unavailable
     ? {
         state: "unavailable",
         title: "SIGN-IN UNAVAILABLE",

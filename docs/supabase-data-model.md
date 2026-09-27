@@ -5,10 +5,12 @@
 > `supabase/seed.sql` are applied to the remote project (ref
 > `xvteqcvvjlxhwijwxbbq`) via `npm run db:migrate` (Management API +
 > `SUPABASE_ACCESS_TOKEN` from `.env`); idempotent, safe to re-run.
-> `src/lib/supabase.js` exposes the shared `supabase` client (with
-> `isSupabaseConfigured`) + `submitRegistration()`; builds without
-> `VITE_SUPABASE_*` degrade instead of crashing — the wizard still runs and
-> reports "cloud sync unavailable". The `/register` wizard dual-writes (local
+> `src/lib/supabase.js` exposes `getSupabaseClient()` (with
+> `isSupabaseConfigured()`) + `submitRegistration()`; credentials arrive at
+> RUNTIME from `GET /api/config` (`api/config.js` reading `SUPABASE_URL` /
+> `SUPABASE_ANON_KEY` from the server env), so nothing is inlined by Vite.
+> Deployments without them degrade instead of crashing — the wizard still runs
+> and reports "cloud sync unavailable". The `/register` wizard dual-writes (local
 > store first for `/admin123456789`, then the anon insert), and `npm run db:ping` proves
 > connectivity from the anon side.
 > Remaining: authenticated-admin pass (sign-in gate, scoped SELECT policies),
@@ -115,8 +117,15 @@ security stance.
 ## Integration checklist
 
 - [x] `npm i @supabase/supabase-js`
-- [x] `.env` with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (commit `.env.example` only)
-- [x] Add the project URL to `connect-src` in the CSP (`vite.config.js` `securityHeadersPlugin` **and** `public/_headers` — keep both in sync)
+- [x] `.env` with `SUPABASE_URL` / `SUPABASE_ANON_KEY` (commit `.env.example` only).
+      **No `VITE_` prefix** — those vars are served at runtime by `api/config.js`,
+      so the anon key is absent from the built bundle and rotatable without a rebuild.
+- [x] `connect-src` in the CSP allows `https://*.supabase.co` (`vite.config.js`
+      `securityHeadersPlugin` **and** `public/_headers` + `vercel.json` — keep all
+      in sync). A static header file cannot read env vars, and the origin is only
+      known at runtime, so the wildcard replaces the old hardcoded project URL.
+- [x] `vercel.json` rewrite excludes `/api/` (`/((?!api/).*)`) so the runtime-config
+      function is not swallowed by the SPA catch-all — asserted by `verify:deploy`.
 - [x] Registration wizard on `/register` inserting into `public.registrations`
       (dual-write: local store first for `/admin123456789`, then best-effort Supabase
       insert; `/gateway` redirects legacy links into the wizard)

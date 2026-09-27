@@ -8,18 +8,23 @@
  * `connect-src` and `img-src` — no accounts.google.com script or frame.
  *
  * The anon / publishable key is *designed* to be public (it grants nothing
- * beyond what Row Level Security allows), so it ships in the bundle through
- * Vite's VITE_ prefix. A service-role key must never appear in this repo.
+ * beyond what Row Level Security allows), so sending it to the browser is
+ * correct. A service-role key must never appear in this repo — `api/config.js`
+ * refuses to serve one even if it is pasted into SUPABASE_ANON_KEY.
  *
- * When the env vars are absent (fresh clone, CI, or a deployment that forgot
- * them) the site must still render: `isAuthConfigured` gates every auth
- * surface so NEXUS degrades to a plain gateway instead of crashing.
+ * When the config is unavailable (fresh clone, static host with no /api, or a
+ * deployment whose env vars are missing) the site must still render:
+ * `isAuthConfigured` gates every auth surface so NEXUS degrades to a plain
+ * gateway instead of crashing.
+ *
+ * Credentials are FETCHED at runtime from /api/config rather than inlined by
+ * Vite — see runtime-config.js for why, and api/config.js for the server side.
+ * That makes `isAuthConfigured` asynchronous, so it is now a function: the auth
+ * surfaces already treat "not configured" as a state to render, and awaiting
+ * the answer is the honest way to distinguish "no credentials" from "not
+ * fetched yet" (the old sync check could not tell those apart).
  */
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? "";
-// Accepts either the legacy anon JWT or a newer sb_publishable_… key.
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
-
-export const isAuthConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+import { loadRuntimeConfig } from "./runtime-config.js";
 
 const AUTH_OPTIONS = {
   // PKCE is the flow Supabase recommends for browsers: Google returns
@@ -43,17 +48,30 @@ const AUTH_OPTIONS = {
  * deployment has no credentials rather than throwing.
  */
 export async function createAuthClient() {
-  if (!isAuthConfigured) return null;
+  const config = await loadRuntimeConfig();
+  if (!config) return null;
   try {
     // Dynamic on purpose: this is the line that keeps supabase-js out of the
     // blocking entry bundle. Vite splits it into its own async chunk.
     const { createClient } = await import("@supabase/supabase-js");
-    return createClient(supabaseUrl, supabaseAnonKey, { auth: AUTH_OPTIONS });
+    return createClient(config.supabaseUrl, config.supabaseAnonKey, { auth: AUTH_OPTIONS });
   } catch {
     // Malformed URL, or the chunk failed to resolve. Returned as null so the
     // caller can surface it in the UI — nothing here should throw into render.
     return null;
   }
+}
+
+/**
+ * Whether this deployment has a usable identity provider.
+ *
+ * Async because the credentials now arrive over the network, so a caller can
+ * tell "not configured" apart from "not fetched yet" — the old synchronous
+ * check could not. AuthContext owns that tri-state (`loading` / `signed_out` /
+ * `signed_in`) so the navbar never flashes a SIGN IN button it must retract.
+ */
+export async function isAuthConfigured() {
+  return Boolean(await loadRuntimeConfig());
 }
 
 /** Where Supabase sends the browser back to. Must be allow-listed in the

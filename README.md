@@ -118,25 +118,44 @@ is reached with a top-level redirect, never an iframe or third-party script.
 2. **Google Cloud → OAuth 2.0 Client**
    - Authorized redirect URI: `https://xvteqcvvjlxhwijwxbbq.supabase.co/auth/v1/callback`
 3. **Env vars** — copy `.env.example` → `.env` and fill in the anon /
-   publishable key (Vite loads `.env` automatically; `.env.local` also works
-   and takes precedence). On Vercel set the same two names in Project →
-   Settings → Environment Variables. The anon key is public by design, but
-   anything with a `VITE_` prefix is **inlined into the browser bundle** — a
-   service-role key or the database connection string must never go there.
+   publishable key. On Vercel set the same two names in Project → Settings →
+   Environment Variables, ticking **Production**. They are `SUPABASE_URL` and
+   `SUPABASE_ANON_KEY` — **no `VITE_` prefix**, deliberately: a prefixed
+   variable is compiled into the public bundle at build time, which pins the
+   credential to a rebuild and leaves it in immutable CDN assets.
 
 Without those env vars the site still builds and runs: every auth surface
 degrades to a status line instead of a dead button (`isAuthConfigured`).
 
-### Where the Supabase origin lives
+### Where the Supabase credentials come from
 
-`vite dev` and `vite preview` read `VITE_SUPABASE_URL` from `.env` and derive
-the CSP origin from it (`vite.config.js`). `public/_headers` (Netlify /
-Cloudflare) and `vercel.json` (the host in use) cannot read env vars, so those
-two hardcode `https://xvteqcvvjlxhwijwxbbq.supabase.co`. Change the Supabase
-project ⇒ update `.env`, `public/_headers` and `vercel.json`, or the browser
-silently blocks the auth requests. `connect-src` covers the token calls and
-`img-src` the Google avatars — **no** `accounts.google.com` script or frame is
-needed, because the redirect flow means Google never runs on this page.
+They are **fetched at runtime**, not compiled in. `api/config.js` is a Vercel
+function that reads `SUPABASE_URL` / `SUPABASE_ANON_KEY` from the server
+environment and returns them as JSON; `src/config/runtime-config.js` fetches
+`GET /api/config` once per page load and memoises the result in
+`sessionStorage`. `vite dev` / `vite preview` serve the same endpoint through
+`runtimeConfigPlugin` in `vite.config.js`, so local behaviour matches prod.
+
+Why: the anon key is public by design (it grants nothing beyond RLS), so this is
+not about hiding it — it is about **rotatability**. Change the env var, redeploy
+the function, and every open tab picks it up on its next load. No rebuild, no
+stale asset. `api/config.js` also decodes the key and refuses to serve anything
+whose role is not `anon`, so a fat-fingered service-role value fails loudly
+instead of being published.
+
+Two consequences worth knowing:
+
+- **`/api/*` must not be SPA-rewritten.** `vercel.json` uses
+  `/((?!api/).*)` so the function stays reachable; a catch-all would return
+  `index.html` to `fetch()`, the config would parse as `null`, and auth would
+  die with no error anywhere. `npm run verify:deploy` asserts this.
+- **The CSP `connect-src` uses `https://*.supabase.co`**, in both
+  `vercel.json` and `public/_headers`. A static header file cannot read the
+  server environment, and the origin is no longer known at build time. The
+  wildcard is broader than one project but grants no data access — RLS is the
+  gate. `img-src` still needs `https://*.googleusercontent.com` for avatars, and
+  **no** `accounts.google.com` script or frame, because the redirect flow means
+  Google never runs on this page.
 
 `npm run verify:google` asserts the navbar control really reaches Google
 (`accounts.google.com`), which is the check that catches a redirect URL

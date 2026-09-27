@@ -24,14 +24,14 @@ function loadEnv(path) {
 }
 
 const env = loadEnv(new URL("../.env", import.meta.url));
-const url = env.VITE_SUPABASE_URL;
-const anonKey = env.VITE_SUPABASE_ANON_KEY;
+const url = env.SUPABASE_URL;
+const anonKey = env.SUPABASE_ANON_KEY;
 
 if (!url || !anonKey) {
-  console.error("FAIL: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY missing from .env");
+  console.error("FAIL: SUPABASE_URL / SUPABASE_ANON_KEY missing from .env");
   process.exit(1);
 }
-console.log(`env ok: VITE_SUPABASE_URL=${url} anon_key_len=${anonKey.length}`);
+console.log(`env ok: SUPABASE_URL=${url} anon_key_len=${anonKey.length}`);
 
 const supabase = createClient(url, anonKey, { auth: { persistSession: false } });
 

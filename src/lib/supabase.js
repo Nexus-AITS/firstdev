@@ -1,10 +1,12 @@
 /**
- * Supabase client — single shared instance for the app.
+ * Supabase client for registration writes — built on demand from the runtime
+ * config rather than at import time.
  *
- * Credentials come from `.env` (Vite only exposes `VITE_`-prefixed vars to
- * client code):
- *   VITE_SUPABASE_URL       https://<project-ref>.supabase.co
- *   VITE_SUPABASE_ANON_KEY  public anon key (safe for the browser; RLS gates access)
+ * Credentials come from `/api/config` (see runtime-config.js), which reads the
+ * server environment. Nothing is inlined by Vite, so the anon key is absent
+ * from the static bundle and can be rotated without a rebuild.
+ *   SUPABASE_URL       https://<project-ref>.supabase.co   (server side)
+ *   SUPABASE_ANON_KEY  public anon key — safe for the browser; RLS gates access
  *
  * The admin console's data layer (src/data/registrations.js) still reads the
  * local mirror; this client is the swap-in point — replace each store function
@@ -12,22 +14,40 @@
  * See docs/supabase-data-model.md for the schema and wiring checklist.
  */
 import { createClient } from "@supabase/supabase-js";
+import { loadRuntimeConfig } from "../config/runtime-config.js";
 
-const url = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
-const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+/**
+ * Resolve a ready client, or null when the deployment is unconfigured.
+ *
+ * Cached per page load: the auth flow and the registration wizard both need a
+ * client, and two Supabase instances would mean two session stores fighting
+ * over the same storage key.
+ */
+let clientPromise = null;
 
-// Degrade instead of throwing: importing this module must never crash a route.
-// Fresh clones, CI and deployments without VITE_SUPABASE_* still get the full
-// wizard — `supabase` is simply null and `submitRegistration` reports
-// { synced: false } so the success screen says "cloud sync unavailable".
-// (Same contract as config/supabase.js and its `isAuthConfigured`.)
-export const isSupabaseConfigured = Boolean(url && anonKey);
+export function getSupabaseClient() {
+  if (!clientPromise) {
+    clientPromise = loadRuntimeConfig().then((config) => {
+      if (!config) return null;
+      try {
+        return createClient(config.supabaseUrl, config.supabaseAnonKey, {
+          auth: { persistSession: false },
+        });
+      } catch {
+        return null;
+      }
+    });
+  }
+  return clientPromise;
+}
 
-export const supabase = isSupabaseConfigured
-  ? createClient(url, anonKey, {
-      auth: { persistSession: false },
-    })
-  : null;
+/**
+ * Whether a cloud sync is possible. Async for the same reason as the client:
+ * the answer is not known until the config resolves.
+ */
+export async function isSupabaseConfigured() {
+  return Boolean(await getSupabaseClient());
+}
 
 /**
  * Send a completed /register wizard row to the remote project.
@@ -36,9 +56,10 @@ export const supabase = isSupabaseConfigured
  * Returns { synced: true } or { synced: false, error }.
  */
 export async function submitRegistration(row) {
+  const supabase = await getSupabaseClient();
   if (!supabase) {
     console.warn(
-      "supabase insert skipped: VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY not set in this build"
+      "supabase insert skipped: no runtime config — SUPABASE_URL / SUPABASE_ANON_KEY not set on this deployment"
     );
     return { synced: false, error: "Supabase is not configured for this deployment." };
   }
@@ -66,5 +87,3 @@ export async function submitRegistration(row) {
     return { synced: false, error: String(err?.message || err) };
   }
 }
-
-export default supabase;

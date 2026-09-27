@@ -90,9 +90,10 @@ for (const vp of VIEWPORTS) {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - window.innerWidth
   );
-  // The headline depends on whether VITE_SUPABASE_* were present at build time:
-  // an unconfigured build must say so, a configured one must be mid-exchange
-  // (a bare `?code=` visit resolves to a refused state after the watchdog).
+  // The headline depends on whether the runtime config resolved with
+  // credentials: an unconfigured deployment must say so, a configured one must
+  // be mid-exchange (a bare `?code=` visit resolves to a refused state after
+  // the watchdog).
   const decisive =
     /CROSSING THE THRESHOLD|SIGNATURE ACCEPTED|THE THRESHOLD REFUSED|SIGN-IN UNAVAILABLE/.test(
       h1
