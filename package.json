@@ -33,6 +33,7 @@
     "verify:pricing": "node scripts/verify-pricing.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",
+    "verify:selection": "node scripts/verify-selection.mjs",
     "db:query": "node scripts/db-query.mjs",
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
     "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap"
@@ -57,3 +58,4 @@
     "vite": "^6.3.5"
   }
 }
+

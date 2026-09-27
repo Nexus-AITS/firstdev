@@ -88,7 +88,21 @@ const normalise = (s) => {
 };
 
 const before = await sql(SNAPSHOT);
-out(before.length === 6, "found the six staff policies to compare", `n=${before.length}`);
+/* The count is discovered, not asserted as a fixed number. Migration ...0006
+   added a seventh staff policy (registration_events), which is exactly the
+   situation this check exists for: a hard-coded "six" would have quietly
+   stopped covering a policy the moment a new staff-readable table appeared. The
+   floor of six is the original set; everything found is compared below. */
+out(
+  before.length >= 6,
+  "found the staff policies to compare",
+  `n=${before.length} (6 from Phase 3, +1 from ...0006)`
+);
+out(
+  before.every((p) => p.cmd && p.roles && p.qual),
+  "every staff policy reports a command, roles and a predicate",
+  before.map((p) => p.policyname).join(", ")
+);
 
 const migration = readFileSync(
   new URL("../supabase/migrations/20260927000005_pagination_indexes.sql", import.meta.url),
