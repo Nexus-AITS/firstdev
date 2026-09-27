@@ -39,6 +39,21 @@ function out(ok, label, detail = "") {
   }
 }
 
+/**
+ * Open a themed listbox and pick the option whose label matches.
+ *
+ * The role pickers are no longer <select> elements (the OS drew their open list,
+ * unstyleable), so a suite that wants a role has to do what an operator does:
+ * open the control, then click the option.
+ */
+async function chooseOption(page, selectId, label) {
+  await page.click(`[data-select="${selectId}"]`);
+  const list = `[data-select-list="${selectId}"]`;
+  await page.waitForSelector(`${list} [role="option"]`);
+  await page.click(`${list} [role="option"]:has-text("${label}")`);
+  await page.waitForTimeout(200);
+}
+
 function loadEnv(path) {
   const out = {};
   for (const raw of readFileSync(path, "utf8").split(/\r?\n/)) {
@@ -104,9 +119,17 @@ try {
   for (const id of ["#staff-new-username", "#staff-new-fullname", "#staff-new-password", "#staff-new-role"]) {
     out((await page.locator(id).count()) === 1, `create form has ${id}`);
   }
+  // The role picker is a themed listbox, not a <select>: read its options by
+  // OPENING it, which also proves the control actually opens. The values are
+  // read from data-value because the LABELS are deliberately descriptive
+  // ("Administrator — accept or reject participants"), so comparing label text
+  // to the role name would be comparing the wrong thing.
+  await page.click('[data-select="staff-new-role"]');
+  await page.waitForSelector('[data-select-list="staff-new-role"] [role="option"]');
   const roleValues = await page
-    .locator("#staff-new-role option")
-    .evaluateAll((os) => os.map((o) => o.value));
+    .locator('[data-select-list="staff-new-role"] [role="option"]')
+    .evaluateAll((os) => os.map((o) => o.dataset.value));
+  await page.keyboard.press("Escape");
   out(
     ["coordinator", "admin", "master"].every((r) => roleValues.includes(r)),
     "create form offers all three roles",
@@ -119,7 +142,7 @@ try {
     await page.fill("#staff-new-username", name);
     await page.fill("#staff-new-fullname", `Probe ${role}`);
     await page.fill("#staff-new-password", CREATED_PASSWORD);
-    await page.selectOption("#staff-new-role", role);
+    await chooseOption(page, "staff-new-role", role);
     await page.click("#staff-create-submit");
     await page.waitForTimeout(3000);
     out((await page.locator("li").filter({ hasText: name }).count()) >= 1, `created a ${role} from the panel`, name);
@@ -139,9 +162,12 @@ try {
     "full name persisted (staffUpdate used to hardcode p_full_name to null)"
   );
 
-  /* ---- update: promote the coordinator to admin, via the role select ---- */
+  /* ---- update: promote the coordinator to admin, via the role dropdown ---- */
   const coordRow = page.locator("li").filter({ hasText: CREATED.coordinator }).first();
-  await coordRow.locator("select").selectOption("admin");
+  const roleSelectId = await coordRow
+    .locator("[data-select^='staff-role-']")
+    .getAttribute("data-select");
+  await chooseOption(page, roleSelectId, "admin");
   await page.waitForTimeout(3000);
   const promoted = await sql(`select role from public.staff_users where username = '${CREATED.coordinator}';`);
   out(promoted[0]?.role === "admin", "role change from the panel is persisted", `role=${promoted[0]?.role}`);

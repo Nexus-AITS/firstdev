@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import Page from "../components/ui/Page.jsx";
 import Reveal from "../components/ui/Reveal.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
+import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
@@ -765,12 +766,17 @@ export default function Register() {
                   <div className="grid gap-5 sm:grid-cols-2">
                     <div>
                       <label className={labelClass} htmlFor="reg-year">Year</label>
-                      <select id="reg-year" name="year" required value={form.year} onChange={set("year")} className={fieldClass}>
-                        <option value="" disabled>Select year</option>
-                        {YEARS.map((y) => (
-                          <option key={y} value={y}>{y}</option>
-                        ))}
-                      </select>
+                      <Select
+                        id="reg-year"
+                        name="year"
+                        tone="site"
+                        required
+                        value={form.year}
+                        onChange={(value) => setForm((f) => ({ ...f, year: value }))}
+                        options={YEARS.map((y) => ({ value: y, label: y }))}
+                        placeholder="Select year"
+                        className={fieldClass}
+                      />
                     </div>
                     <div>
                       <label className={labelClass} htmlFor="reg-dept">Department</label>

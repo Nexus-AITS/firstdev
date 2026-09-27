@@ -15,7 +15,7 @@
  *     use, but hiding is only a courtesy — every restriction is also an RLS
  *     policy, so removing a button changes nothing an attacker could do.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MAX_PAGE_SIZE,
   PAGE_SIZES,
@@ -39,6 +39,8 @@ import {
   loadPublicCatalogue,
 } from "../data/staff.js";
 import { buildRosterWorkbook, downloadXlsx } from "../lib/xlsx.js";
+import Select from "../components/ui/Select.jsx";
+import DateField from "../components/ui/DateField.jsx";
 import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import { bundles } from "../data/bundles.js";
 import { events } from "../data/events.js";
@@ -55,6 +57,9 @@ const TABS = [
   // gate. Hiding it from coordinators is a courtesy; the database is what
   // actually refuses the write.
   { id: "catalogue", label: "Catalogue", action: "manage_catalogue" },
+  // Contact channels are admin+ (the operations team that verifies payments is
+  // the team that answers the phone), matching the RPC's own gate.
+  { id: "contacts", label: "Contacts", action: "manage_contacts" },
 ];
 
 /**
@@ -261,19 +266,34 @@ function StatusPill({ status }) {
   );
 }
 
-/** `2026-09-27T06:11:21.853734+00:00` -> `27 Sep 2026, 06:11` */
+/**
+ * `2026-09-27T06:11:21.853734+00:00` -> `27 Sep 2026, 11:41 IST`
+ *
+ * The zone is Asia/Kolkata, EXPLICITLY, and it was wrong before: this formatted
+ * in UTC, so a payment confirmed at 9am IST was stamped 03:30 and the audit log
+ * read as though the operations team worked five and a half hours in the past.
+ * An operator checking "did we verify this before or after the tournament
+ * started" was reading the wrong clock — and the mismatch was invisible because
+ * the number looked like a real time.
+ *
+ * It is pinned rather than left to the browser because the DATABASE is what
+ * decides these moments: the export's day windows and the date filters are
+ * already +05:30, and a stamp rendered in the operator's own timezone would
+ * disagree with the very filters it is being read against. The IST suffix is
+ * printed because a bare time is exactly the thing that was ambiguous.
+ */
 function when(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-GB", {
+  return `${d.toLocaleString("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-    timeZone: "UTC",
-  });
+    timeZone: "Asia/Kolkata",
+  })} IST`;
 }
 
 function Banner({ kind = "error", children }) {
@@ -392,18 +412,17 @@ function Pager({ page, pageSize, pageCount, total, busy, onPage, onPageSize, lab
 
       <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ash">
         Rows
-        <select
-          value={pageSize}
-          onChange={(e) => onPageSize(Number(e.target.value))}
-          disabled={busy}
-          className="border border-line bg-void-raised px-2 py-1 font-mono text-[11px] text-bone outline-none focus:border-violet-bright"
-        >
-          {PAGE_SIZES.map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
-          ))}
-        </select>
+        <span className="w-[5.5rem]">
+          <Select
+            id="pager-size"
+            ariaLabel="Rows per page"
+            value={String(pageSize)}
+            onChange={(value) => onPageSize(Number(value))}
+            disabled={busy}
+            options={PAGE_SIZES.map((n) => ({ value: String(n), label: String(n) }))}
+            className="px-2 py-1 text-[11px]"
+          />
+        </span>
       </label>
     </div>
   );
@@ -426,21 +445,61 @@ function RosterTab({
   const [busyId, setBusyId] = useState(null);
 
   /* The text box is the operator's own state; the query it triggers belongs to
-     the database. Debounced so a fast typist makes one request, not one per
-     keystroke. */
-  const [term, setTerm] = useState(paging.query);
-  const debouncedTerm = useDebounced(term, 300);
-  useEffect(() => {
-    if (debouncedTerm !== paging.query) setFilter({ query: debouncedTerm });
-    // Only the settled term should drive this; including `paging` would make
-    // the effect re-fire when its own setFilter lands.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedTerm]);
+     the database.
 
-  /* If the filter is cleared from elsewhere (the reset button), follow it. */
+     Two things this deliberately does, because the search is the filter people
+     fight with most:
+
+     1. WAITS FOR THREE CHARACTERS. `or=(name.ilike.%a%,…five columns…)` is a
+        full scan that matches nearly every row, and the operator is not going
+        to read the result — they are halfway through typing. Three is also the
+        shortest pattern pg_trgm can actually help with (migration …012), so a
+        shorter term would be slow for a reason no index can fix. The box stays
+        live; only the request waits.
+
+     2. SHOWS THAT IT IS WORKING. The list used to sit there unchanged for the
+        length of the request with no indicator, so a search that was working
+        read as one that had been ignored. `searching` covers both halves of the
+        wait: the debounce still settling, and the request in flight. */
+  const MIN_TERM = 3;
+  const [term, setTerm] = useState(paging.query);
+  const debouncedTerm = useDebounced(term, 320);
+  const trimmed = term.trim();
+  const ready = debouncedTerm.trim().length >= MIN_TERM;
+  const settledTerm = ready ? debouncedTerm : "";
+  const tooShort = trimmed.length > 0 && trimmed.length < MIN_TERM;
+
+  /* What we last handed to the database, so we can tell OUR change apart from
+     somebody else's.
+
+     This is the bug that made the search look broken. There was a second effect
+     shaped "if the query is empty, clear the box", meant to follow the Clear
+     filters button. But while an operator is TYPING, `paging.query` is still
+     the previous value — the debounce has not fired yet — so that effect read
+     their first keystroke as "the filter was cleared elsewhere" and wiped the
+     box. One character typed, then gone. With a fast typist it flickered; with
+     a slow one it looked like the field ignored you entirely. Nothing to do
+     with the database, which was answering correctly the whole time. */
+  const pushed = useRef(paging.query);
+
+  // Push our own settled term. Only the settled value drives this, so this does
+  // not re-fire when the setFilter it makes lands.
   useEffect(() => {
-    if (paging.query === "" && term !== "") setTerm("");
-  }, [paging.query, term]);
+    if (settledTerm === paging.query) return;
+    pushed.current = settledTerm;
+    setFilter({ query: settledTerm });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settledTerm]);
+
+  // Adopt a query changed by something else (Clear filters), and only that.
+  useEffect(() => {
+    if (paging.query === pushed.current) return;
+    pushed.current = paging.query;
+    setTerm(paging.query);
+  }, [paging.query]);
+
+  // The debounce has not fired yet, or the list is fetching.
+  const searching = (trimmed !== "" && trimmed !== settledTerm) || busy;
 
   const rows = win.data;
   const [catalogueEvents, setCatalogueEvents] = useState([]);
@@ -590,18 +649,21 @@ function RosterTab({
           <label htmlFor="roster-status" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
             Status
           </label>
-          <select
-            id="roster-status"
-            value={paging.status}
-            onChange={(e) => setFilter({ status: e.target.value })}
-            className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
-          >
-            <option value="all">All</option>
-            <option value="awaiting_utr">Awaiting UTR</option>
-            <option value="verified">Verified</option>
-            <option value="rejected">Rejected</option>
-            <option value="unverified">Unverified</option>
-          </select>
+          <div className="mt-2">
+            <Select
+              id="roster-status"
+              value={paging.status}
+              onChange={(value) => setFilter({ status: value })}
+              options={[
+                { value: "all", label: "All" },
+                { value: "awaiting_utr", label: "Awaiting UTR" },
+                { value: "verified", label: "Verified" },
+                { value: "rejected", label: "Rejected" },
+                { value: "unverified", label: "Unverified" },
+              ]}
+              className="w-[11rem]"
+            />
+          </div>
         </div>
 
         {/* The event filter narrows to registrations that actually carry the
@@ -611,49 +673,54 @@ function RosterTab({
           <label htmlFor="roster-event" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
             Event
           </label>
-          <select
-            id="roster-event"
-            value={paging.event}
-            onChange={(e) => setFilter({ event: e.target.value })}
-            className="mt-2 max-w-[16rem] border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
-          >
-            <option value="all">All events</option>
-            {catalogueEvents.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.title}
-              </option>
-            ))}
-          </select>
+          <div className="mt-2">
+            <Select
+              id="roster-event"
+              value={paging.event}
+              onChange={(value) => setFilter({ event: value })}
+              options={[
+                { value: "all", label: "All events" },
+                ...catalogueEvents.map((e) => ({ value: e.id, label: e.title })),
+              ]}
+              className="w-[15rem]"
+            />
+          </div>
         </div>
 
         {/* Calendar dates, not timestamps. The data layer appends the +05:30 day
             boundary itself; sending a full ISO instant from the browser would
-            hand Postgres a UTC value and quietly cut the day at 05:30 IST. */}
+            hand Postgres a UTC value and quietly cut the day at 05:30 IST.
+
+            A themed picker rather than <input type="date">: the native one opens
+            the operating system's own light-themed calendar on top of the dark
+            console, and offered no way to jump to today. */}
         <div>
           <label htmlFor="roster-from" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
             From
           </label>
-          <input
-            id="roster-from"
-            type="date"
-            value={paging.fromDate}
-            max={paging.toDate || undefined}
-            onChange={(e) => setFilter({ fromDate: e.target.value })}
-            className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
-          />
+          <div className="mt-2">
+            <DateField
+              id="roster-from"
+              value={paging.fromDate}
+              onChange={(value) => setFilter({ fromDate: value })}
+              placeholder="Any date"
+              max={paging.toDate || undefined}
+            />
+          </div>
         </div>
         <div>
           <label htmlFor="roster-to" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
             To
           </label>
-          <input
-            id="roster-to"
-            type="date"
-            value={paging.toDate}
-            min={paging.fromDate || undefined}
-            onChange={(e) => setFilter({ toDate: e.target.value })}
-            className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
-          />
+          <div className="mt-2">
+            <DateField
+              id="roster-to"
+              value={paging.toDate}
+              onChange={(value) => setFilter({ toDate: value })}
+              placeholder="Any date"
+              min={paging.fromDate || undefined}
+            />
+          </div>
         </div>
 
         <div className="ml-auto flex flex-wrap items-end gap-3">
@@ -687,11 +754,25 @@ function RosterTab({
         </div>
       </div>
 
-      <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash">
-        {filtering
-          ? `${win.total ?? rows.length} matching registration${win.total === 1 ? "" : "s"}`
-          : "Newest first"}
+      <p
+        className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash"
+        aria-live="polite"
+        data-roster-summary="true"
+        data-searching={searching ? "true" : "false"}
+      >
+        {searching
+          ? "Searching…"
+          : filtering
+            ? `${win.total ?? rows.length} matching registration${win.total === 1 ? "" : "s"}`
+            : "Newest first"}
       </p>
+
+      {tooShort ? (
+        <p className="mt-1 font-mono text-[11px] text-ash" data-search-hint="true">
+          Type {MIN_TERM - trimmed.length} more character{MIN_TERM - trimmed.length === 1 ? "" : "s"} to
+          search.
+        </p>
+      ) : null}
 
       {notice ? <div className="mt-3"><Banner kind={notice.kind}>{notice.text}</Banner></div> : null}
 
@@ -715,9 +796,35 @@ function RosterTab({
         onPageSize={setPageSize}
       />
 
+      {/* A search that matches nothing must SAY the term it searched for. "No
+          registrations" reads as "the roster is empty", which sends an operator
+          off to check whether everyone disappeared.
+
+          This replaces the empty row that used to live INSIDE the list: it was an
+          <li>, so a test counting `#admin-table-wrap > li` counted it as a
+          participant, and it appeared below the list rather than where the
+          operator is looking. */}
+      {!busy && rows.length === 0 ? (
+        <p
+          className="mt-4 border border-line bg-void-raised px-4 py-4 text-sm text-ash"
+          data-roster-empty="true"
+        >
+          {filtering
+            ? `No registrations match these filters${
+                trimmed && ready ? ` — including the search “${trimmed}”` : ""
+              }.`
+            : "No registrations yet."}
+        </p>
+      ) : null}
+
       {/* id="admin-table-wrap" is the anchor scripts/verify.mjs asserts on to
           prove the roster is absent for anyone without a staff session. */}
-      <ul id="admin-table-wrap" className="mt-5 space-y-3">
+      <ul
+        id="admin-table-wrap"
+        className={`mt-5 space-y-3 transition-opacity ${searching ? "opacity-60" : ""}`}
+        aria-busy={searching}
+        data-searching={searching ? "true" : "false"}
+      >
         {rows.map((r) => (
           <li key={r.id} className="border border-line bg-void-raised p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -841,15 +948,6 @@ function RosterTab({
             ) : null}
           </li>
         ))}
-        {rows.length === 0 ? (
-          <li className="border border-line bg-void-raised px-4 py-6 text-center text-sm text-ash">
-            {busy
-              ? "Loading…"
-              : filtering
-                ? "No registrations match that search."
-                : "No registrations yet."}
-          </li>
-        ) : null}
       </ul>
     </section>
   );
@@ -887,19 +985,18 @@ function AuditTab({ window: win, paging, busy, setPage, setPageSize, setFilter }
         <label htmlFor="audit-filter" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
           Show
         </label>
-        <select
-          id="audit-filter"
-          value={paging.action}
-          onChange={(e) => setFilter({ action: e.target.value })}
-          className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
-        >
-          <option value="all">Everything</option>
-          {Object.entries(ACTION_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <div className="mt-2">
+          <Select
+            id="audit-filter"
+            value={paging.action}
+            onChange={(value) => setFilter({ action: value })}
+            options={[
+              { value: "all", label: "Everything" },
+              ...Object.entries(ACTION_LABELS).map(([value, label]) => ({ value, label })),
+            ]}
+            className="w-[14rem]"
+          />
+        </div>
       </div>
 
       <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash">
@@ -1144,19 +1241,14 @@ function StaffTab({
             />
           </Field>
           <Field label="Role" id="staff-new-role" hint={ROLE_META[form.role]?.blurb}>
-            <select
+            <Select
               id="staff-new-role"
               name="role"
               value={form.role}
-              onChange={set("role")}
+              onChange={(value) => set("role")({ target: { value } })}
+              options={ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               className={inputClass}
-            >
-              {ROLE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            />
           </Field>
         </div>
         <div className="mt-4">
@@ -1205,23 +1297,19 @@ function StaffTab({
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <select
-                  aria-label={`Role for ${u.username}`}
+                <Select
+                  id={`staff-role-${u.username}`}
+                  ariaLabel={`Role for ${u.username}`}
                   value={u.role}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     runChange(
-                      () => staffUpdate({ userId: u.id, role: e.target.value, token: session.token }),
-                      `${u.username} is now ${e.target.value}.`
+                      () => staffUpdate({ userId: u.id, role: value, token: session.token }),
+                      `${u.username} is now ${value}.`
                     )
                   }
-                  className="border border-line bg-void px-2 py-1 font-mono text-[11px] text-bone"
-                >
-                  {ROLE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.value}
-                    </option>
-                  ))}
-                </select>
+                  options={ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.value }))}
+                  className="w-[7.5rem] px-2 py-1 text-[11px]"
+                />
                 <ActionButton
                   label={u.is_active ? "Deactivate" : "Reactivate"}
                   onClick={() =>
@@ -1695,6 +1783,9 @@ function Console({ session, onExpired }) {
             JSON document, not a PostgREST list), so it takes no window, no pager
             and no reload wiring from this shell. */}
         {active?.id === "catalogue" ? <CatalogueManager session={session} /> : null}
+        {/* Same shape of ownership as the catalogue: the contacts tab loads and
+            saves itself, so it takes no window, pager or reload wiring. */}
+        {active?.id === "contacts" ? <ContactManager session={session} /> : null}
       </div>
     </main>
   );

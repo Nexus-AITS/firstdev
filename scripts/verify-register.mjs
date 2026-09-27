@@ -163,12 +163,40 @@ async function fillDetails(page, email, extra = {}) {
   // with each other and the collision would read as a wizard bug.
   await page.fill("#reg-roll", extra.roll ?? "21ZZZ99");
   await page.fill("#reg-college", extra.college ?? "ZZ Institute of Technology");
-  await page.selectOption("#reg-year", extra.year ?? "2nd");
+  // The year is a themed listbox now, not a <select>: opening it and clicking
+  // the option is what a participant does, where selectOption() drove an
+  // element that no longer exists.
+  await choose(page, "reg-year", extra.year ?? "2nd");
   await page.fill("#reg-dept", extra.department ?? "CSE");
   await page.fill("#reg-phone", extra.phone ?? "+91 90000 00000");
   await page.fill("#reg-email", email);
   await page.click("#reg-details-next");
   await page.waitForTimeout(1800);
+}
+
+/** Open a themed dropdown and pick the option whose label matches. */
+async function choose(page, selectId, label) {
+  const trigger = `[data-select="${selectId}"]`;
+  const list = `[data-select-list="${selectId}"]`;
+  await page.click(trigger);
+  try {
+    await page.waitForSelector(`${list} [role="option"]`);
+  } catch (err) {
+    // A listbox that will not open is the one failure worth explaining: report
+    // the control's own state and what the page is actually showing, rather than
+    // "timeout waiting for selector".
+    const state = await page.evaluate((sel) => {
+      const t = document.querySelector(sel);
+      return {
+        open: t?.dataset.open ?? "(no trigger)",
+        options: document.querySelectorAll('[role="option"]').length,
+        text: document.body.innerText.slice(0, 160).replace(/\s+/g, " "),
+      };
+    }, trigger);
+    throw new Error(`dropdown ${selectId} did not open: ${JSON.stringify(state)} (${err.message})`);
+  }
+  await page.click(`${list} [role="option"]:has-text("${label}")`);
+  await page.waitForTimeout(150);
 }
 
 /** Satisfy a bundle's pick-pools and save the choice. */

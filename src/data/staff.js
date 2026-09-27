@@ -35,15 +35,20 @@ export const ROLE_META = {
       "edit_pricing",
       "view_audit",
       "manage_catalogue",
+      "manage_contacts",
     ],
     blurb:
       "Full control: verify or reject payments, remove registrations, manage staff, set prices, and edit the event and bundle catalogue.",
   },
   admin: {
     label: "Administrator",
-    can: ["read", "verify", "reject", "view_audit"],
+    // Contact details are ADMIN+, not master-only: they are what a participant
+    // reads when something has gone wrong, and the team that verifies payments
+    // is the team that answers the phone. Matches the RPC's own
+    // staff_at_least('admin') gate — if you want masters only, change both.
+    can: ["read", "verify", "reject", "view_audit", "manage_contacts"],
     blurb:
-      "Accept or reject participants and review the audit log. Cannot remove registrations, manage staff, or change prices.",
+      "Accept or reject participants, review the audit log, and publish the contact details on the public contact page. Cannot remove registrations, manage staff, or change prices.",
   },
   coordinator: {
     label: "Coordinator",
@@ -672,3 +677,45 @@ export async function staffSetPrice({ kind, refId, price, isActive, token }) {
   });
   return { ok: res.ok, error: res.ok ? null : res.error };
 }
+
+/* ---------- contacts ---------- */
+
+/**
+ * The contact list behind the /contact page, retired rows excluded by the
+ * database itself rather than by a filter in the browser: public_contacts()
+ * is the only statement that can read this table, and it is written so that a
+ * retired number cannot leak through a forgotten `where`.
+ */
+export async function loadPublicContacts() {
+  const res = await rpc("public_contacts", {}, null);
+  if (!res.ok) return { ok: false, contacts: [], error: "Contact details are unavailable right now." };
+  return { ok: true, contacts: Array.isArray(res.body) ? res.body : [], error: null };
+}
+
+/** Every contact row, published or retired. Admin+ to read and write. */
+export async function staffListContacts(token) {
+  const res = await rpc("staff_list_contacts", {}, token);
+  if (!res.ok) return { ok: false, contacts: [], error: res.body?.error ?? "The contact list could not be loaded." };
+  return { ok: true, contacts: res.body?.contacts ?? [], error: null };
+}
+
+/**
+ * Create or edit one contact.
+ *
+ * `id` present = edit. The id is what decides create vs update on the server, so
+ * the form never has to ask "does this exist?" first — which is the race the
+ * two-step check-then-insert would introduce.
+ */
+export async function staffUpsertContact(contact, token) {
+  const res = await rpc("staff_upsert_contact", { p_contact: contact }, token);
+  if (!res.ok) return { ok: false, error: res.body?.error ?? "That contact could not be saved." };
+  return { ok: true, id: res.body?.id ?? null, created: Boolean(res.body?.created), error: null };
+}
+
+/** Take a contact off the public page. The row stays, for the audit trail. */
+export async function staffRetireContact(id, token) {
+  const res = await rpc("staff_retire_contact", { p_contact_id: id }, token);
+  if (!res.ok) return { ok: false, error: res.body?.error ?? "That contact could not be retired." };
+  return { ok: true, error: null };
+}
+

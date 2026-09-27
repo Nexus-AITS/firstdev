@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import Page from "../components/ui/Page.jsx";
 import Reveal from "../components/ui/Reveal.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
+import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
@@ -425,21 +426,18 @@ export default function Profile() {
                         <label className={labelClass} htmlFor="profile-year">
                           Year
                         </label>
-                        <select
+                        <Select
                           id="profile-year"
                           name="year"
+                          tone="site"
+                          required
                           disabled={locked}
                           value={details.year}
-                          onChange={set("year")}
+                          onChange={(value) => setDetails((d) => ({ ...d, year: value }))}
+                          options={YEARS.map((y) => ({ value: y, label: y }))}
+                          placeholder="Select year"
                           className={`${fieldClass} disabled:opacity-50`}
-                        >
-                          <option value="">Select year</option>
-                          {YEARS.map((y) => (
-                            <option key={y} value={y}>
-                              {y}
-                            </option>
-                          ))}
-                        </select>
+                        />
                       </div>
                       <div>
                         <label className={labelClass} htmlFor="profile-dept">
