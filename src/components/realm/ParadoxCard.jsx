@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatFee, formatMaxSize } from "../../data/events.js";
+import { formatEventFee, formatMaxSize, getEventFee } from "../../data/events.js";
+import usePricing from "../../hooks/usePricing.js";
 
 const SHIFTS = ["", "md:ml-[7%]", "md:ml-[13%]", "md:ml-[4%]", "md:ml-[10%]"];
 const TILTS = [-0.6, 0.5, -0.4, 0.7, -0.5];
@@ -13,6 +14,9 @@ const CLIP =
 export default function ParadoxCard({ event, index = 0 }) {
   const shift = SHIFTS[index % SHIFTS.length];
   const tilt = TILTS[index % TILTS.length];
+  // Subscribe to price changes and read the DB-first fee, not `event.payment`.
+  usePricing();
+  const fee = getEventFee(event.id);
 
   return (
     <Reveal delay={0.05 * (index % 3)} className={`w-full ${shift}`}>
@@ -56,10 +60,10 @@ export default function ParadoxCard({ event, index = 0 }) {
                 {event.tagline}
               </p>
 
-              {/* `!= null`, not truthy: payment 0 is a FREE entry, not "unknown". */}
-              {event.payment != null ? (
+              {/* `!= null`, not truthy: a fee of 0 is a FREE entry, not "unknown". */}
+              {fee != null ? (
                 <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.34em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
-                  {formatFee(event.payment)} · {formatMaxSize(event.maxSize)}
+                  {formatEventFee(event.id)} · {formatMaxSize(event.maxSize)}
                 </p>
               ) : null}
 

@@ -503,24 +503,46 @@ function Field({ label, id, hint, children }) {
 }
 
 /**
- * Add and manage operations accounts. Master-only in the UI, and master-only in
+ * Create and manage operations accounts. Master-only in the UI, and master-only in
  * the database — staff_create / staff_update re-check the role server-side, so
  * calling the function directly as a non-master still fails.
+ *
+ * This is the full set of account operations, from the panel itself:
+ *   create  — the "Add an account" form (username, name, password, any of the
+ *             three roles, including promoting someone to master)
+ *   read    — the list below
+ *   update  — role, full name, password
+ *   delete  — deactivate
+ *
+ * There is deliberately no hard DELETE. staff_users rows are referenced by
+ * staff_audit_log.staff_id and by every payment confirmed under that username;
+ * removing the row would leave those actions attributed to an account that no
+ * longer exists. Deactivating revokes access while keeping the audit trail
+ * intact. The database refuses to deactivate or demote the last active master,
+ * so this panel cannot lock everyone out.
  */
 function StaffTab({ session, rows, reload }) {
   const [form, setForm] = useState({ username: "", fullName: "", password: "", role: "coordinator" });
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  /* Per-account edit buffer, keyed by user id so two rows can be mid-edit
+     without one clobbering the other. */
+  const [edits, setEdits] = useState({});
+
+  const editFor = (u) => edits[u.id] ?? { fullName: u.full_name ?? "", newPassword: "" };
+  const setEdit = (u, patch) =>
+    setEdits((prev) => ({ ...prev, [u.id]: { ...(prev[u.id] ?? { fullName: u.full_name ?? "", newPassword: "" }), ...patch } }));
 
   async function submit(event) {
     event.preventDefault();
+    if (busy) return;
     setBusy(true);
     setNotice(null);
     const result = await staffCreate({ ...form, token: session.token });
     setBusy(false);
     if (result.body?.ok) {
       setForm({ username: "", fullName: "", password: "", role: "coordinator" });
-      setNotice({ kind: "ok", text: `${form.username} added.` });
+      setNotice({ kind: "ok", text: `${form.username} added as ${form.role}.` });
       reload();
     } else {
       setNotice({ kind: "error", text: result.body?.error ?? "Could not add that account." });
@@ -533,8 +555,44 @@ function StaffTab({ session, rows, reload }) {
     if (result.body?.ok) {
       setNotice({ kind: "ok", text: okText });
       reload();
-    } else {
-      setNotice({ kind: "error", text: result.body?.error ?? "That change did not go through." });
+      return true;
+    }
+    setNotice({ kind: "error", text: result.body?.error ?? "That change did not go through." });
+    return false;
+  }
+
+  /* One save for the name + password fields. The RPC treats NULL as "leave
+     alone", so only genuinely-changed fields are sent. */
+  async function saveEdits(u) {
+    const draft = editFor(u);
+    const nameChanged = draft.fullName.trim() !== (u.full_name ?? "");
+    const newPassword = draft.newPassword.trim();
+    if (!nameChanged && !newPassword) return;
+
+    const ok = await runChange(
+      () =>
+        staffUpdate({
+          userId: u.id,
+          fullName: nameChanged ? draft.fullName : null,
+          newPassword: newPassword || null,
+          token: session.token,
+        }),
+      newPassword
+        ? `${u.username} updated and their password was reset.`
+        : `${u.username}'s name was updated.`
+    );
+    if (!ok) return;
+
+    setEdits((prev) => {
+      const next = { ...prev };
+      delete next[u.id];
+      return next;
+    });
+    // A password reset that leaves the old session alive would not actually
+    // revoke access, so the sessions go with it.
+    if (newPassword) {
+      await staffRevokeSessions(u.id, session.token);
+      reload();
     }
   }
 
@@ -542,6 +600,92 @@ function StaffTab({ session, rows, reload }) {
 
   return (
     <section>
+      <p className="text-sm leading-relaxed text-ash">
+        Create and manage operations accounts. Only a master administrator may do any of this, and
+        the database re-checks that on every call — so hiding this tab is a courtesy, not the control.
+      </p>
+
+      {notice ? (
+        <div className="mt-4">
+          <Banner kind={notice.kind}>{notice.text}</Banner>
+        </div>
+      ) : null}
+
+      {/* ---------- create ---------- */}
+      <form onSubmit={submit} className="mt-8 border border-line bg-void-raised p-4">
+        <h2 className="font-mono text-[11px] uppercase tracking-[0.35em] text-ash">
+          Add an account
+        </h2>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <Field
+            label="Username"
+            id="staff-new-username"
+            hint="3–32 characters: a–z, 0-9, dot, dash, underscore."
+          >
+            <input
+              id="staff-new-username"
+              name="username"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              required
+              pattern="[a-z0-9._\-]{3,32}"
+              value={form.username}
+              onChange={set("username")}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Full name" id="staff-new-fullname" hint="Optional — shown in the audit log.">
+            <input
+              id="staff-new-fullname"
+              name="fullName"
+              autoComplete="off"
+              value={form.fullName}
+              onChange={set("fullName")}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Password" id="staff-new-password" hint="At least 10 characters.">
+            <input
+              id="staff-new-password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              required
+              minLength={10}
+              value={form.password}
+              onChange={set("password")}
+              className={inputClass}
+            />
+          </Field>
+          <Field label="Role" id="staff-new-role" hint={ROLE_META[form.role]?.blurb}>
+            <select
+              id="staff-new-role"
+              name="role"
+              value={form.role}
+              onChange={set("role")}
+              className={inputClass}
+            >
+              {ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="mt-4">
+          <button
+            type="submit"
+            id="staff-create-submit"
+            disabled={busy}
+            className="border border-violet-bright/60 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-violet-bright transition hover:bg-violet/20 disabled:opacity-40"
+          >
+            {busy ? "Creating…" : "Create account"}
+          </button>
+        </div>
+      </form>
 
       <h2 className="mt-8 font-mono text-[11px] uppercase tracking-[0.35em] text-ash">
         Current accounts ({rows.length})
@@ -600,6 +744,50 @@ function StaffTab({ session, rows, reload }) {
                 />
               </div>
             </div>
+
+            {/* name + password */}
+            <div className="mt-4 grid gap-3 border-t border-line pt-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+              <Field label="Full name" id={`staff-name-${u.id}`}>
+                <input
+                  id={`staff-name-${u.id}`}
+                  value={editFor(u).fullName}
+                  onChange={(e) => setEdit(u, { fullName: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <Field
+                label="New password"
+                id={`staff-pass-${u.id}`}
+                hint="Leave blank to keep the current one."
+              >
+                <input
+                  id={`staff-pass-${u.id}`}
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={10}
+                  value={editFor(u).newPassword}
+                  onChange={(e) => setEdit(u, { newPassword: e.target.value })}
+                  className={inputClass}
+                />
+              </Field>
+              <div className="pb-0.5">
+                <ActionButton
+                  label="Save"
+                  disabled={
+                    (editFor(u).fullName.trim() === (u.full_name ?? "") &&
+                      !editFor(u).newPassword.trim()) ||
+                    (editFor(u).newPassword.length > 0 && editFor(u).newPassword.length < 10)
+                  }
+                  onClick={() => saveEdits(u)}
+                />
+              </div>
+            </div>
+            {u.username === session.username ? (
+              <p className="mt-2 font-mono text-[10px] text-ash/70">
+                Resetting your own password signs you out everywhere — you will sign in again with
+                the new one.
+              </p>
+            ) : null}
           </li>
         ))}
       </ul>
@@ -647,6 +835,10 @@ function PricingTab({ session, rows, reload }) {
     const result = await staffSetPrice({ kind: entry.kind, refId: entry.ref_id, price, token: session.token });
     setBusy(null);
     if (result.ok) {
+      // Re-read public.pricing so the public site's cached prices and this
+      // console's own list both reflect the change immediately. `force` is
+      // required because loadPricing() is otherwise a no-op once loaded.
+      await loadPricing({ force: true });
       setDrafts((d) => {
         const next = { ...d };
         delete next[key];
@@ -729,11 +921,19 @@ function Console({ session, onExpired }) {
   const [remaining, setRemaining] = useState(session.expiresAt - Date.now());
   const [signedOut, setSignedOut] = useState(false);
 
-  /* Reload prices whenever they change, so a master editing a price here sees
-     the same numbers a visitor would. */
+  /* Load the live prices once, and re-read this console's own rows whenever the
+     price store changes.
+
+     The old code was `subscribePricing(() => loadPricing())`, an infinite loop:
+     loadPricing() notifies its listeners in its `finally`, and that listener
+     called loadPricing() again, forever. The console is also not where prices are
+     fetched for the public site any more (App.jsx does that at start-up) — here
+     we only need to refresh after PricingTab saves, so the subscriber bumps a
+     counter that re-runs `reload`. */
+  const [pricingVersion, setPricingVersion] = useState(0);
   useEffect(() => {
     loadPricing();
-    return subscribePricing(() => loadPricing());
+    return subscribePricing(() => setPricingVersion((v) => v + 1));
   }, []);
 
   /* Countdown. Purely informational — the database decides the real expiry. */
@@ -769,7 +969,9 @@ function Console({ session, onExpired }) {
       staff: staff.data,
       pricing: pricing.data,
     });
-  }, [session]);
+    // pricingVersion is a dependency on purpose: when the price store changes
+    // (a save, or the app-start load landing) this re-reads the console's rows.
+  }, [session, pricingVersion]);
 
   useEffect(() => {
     reload();

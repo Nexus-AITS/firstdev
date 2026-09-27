@@ -283,14 +283,16 @@ export async function staffCreate({ username, password, fullName, role, token })
   );
 }
 
-export async function staffUpdate({ userId, isActive, role, newPassword, token }) {
+export async function staffUpdate({ userId, isActive, role, fullName, newPassword, token }) {
   return rpc(
     "staff_update",
     {
       p_user_id: userId,
       p_is_active: isActive ?? null,
       p_role: role ?? null,
-      p_full_name: null,
+      // Previously hardcoded to null, which made `full_name` permanently
+      // uneditable — the RPC could set it, but no caller ever passed it.
+      p_full_name: fullName ?? null,
       p_new_password: newPassword ?? null,
     },
     token

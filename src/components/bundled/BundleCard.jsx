@@ -1,6 +1,7 @@
 import Reveal from "../ui/Reveal.jsx";
 import CinematicButton from "../ui/CinematicButton.jsx";
-import { describeInclude, getPickPool } from "../../data/bundles.js";
+import { describeInclude, getBundlePrice, getPickPool } from "../../data/bundles.js";
+import usePricing from "../../hooks/usePricing.js";
 
 // notched shard silhouette — matches the Off-Grid card language
 const CLIP =
@@ -8,6 +9,15 @@ const CLIP =
 
 /** One payment-bundle offer: number + name, price, inclusions, claim CTA. */
 export default function BundleCard({ bundle, index = 0 }) {
+  // Re-render this card when the database answers with a new price. Without the
+  // subscription the card would keep showing the JS constant compiled into the
+  // bundle even after loadPricing() replaced it.
+  usePricing();
+  // DB-first: the price a master set in the console, falling back to the JS
+  // constant only when the database has not answered. Never `bundle.price`
+  // directly — that bypasses public.pricing entirely.
+  const price = getBundlePrice(bundle.id);
+
   return (
     <Reveal delay={0.06 * (index % 3)} className="h-full">
       <article
@@ -39,20 +49,32 @@ export default function BundleCard({ bundle, index = 0 }) {
             </span>
           </div>
 
-          {/* price */}
-          <p className="relative mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 font-display text-crystal">
-            <span className="flex items-baseline">
-              <span className="text-[clamp(1.3rem,2.2vw,1.8rem)] text-lavender">
-                ₹
+          {/* price — the live, database-owned number. The old markup hardcoded
+              `bundle.price`, which is why a console edit never reached this
+              card. `FREE` is rendered for 0 so a zero bundle can never print a
+              stray "₹0". */}
+          {price != null && price > 0 ? (
+            <p className="relative mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 font-display text-crystal">
+              <span className="flex items-baseline">
+                <span className="text-[clamp(1.3rem,2.2vw,1.8rem)] text-lavender">
+                  ₹
+                </span>
+                <span className="text-[clamp(2.8rem,4.6vw,3.9rem)] font-medium leading-none text-glow">
+                  {price}
+                </span>
               </span>
-              <span className="text-[clamp(2.8rem,4.6vw,3.9rem)] font-medium leading-none text-glow">
-                {bundle.price}
+              <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/45">
+                per bundle
               </span>
-            </span>
-            <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/45">
-              per bundle
-            </span>
-          </p>
+            </p>
+          ) : (
+            <p className="relative mt-5 font-display text-[clamp(1.6rem,3vw,2.4rem)] font-medium text-gold [text-shadow:0_0_22px_rgba(245,215,142,0.4)]">
+              {price === 0 ? "FREE" : "—"}
+              <span className="ml-3 text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/45">
+                per bundle
+              </span>
+            </p>
+          )}
 
           {/* inclusions */}
           <ul className="relative mt-6 flex flex-col gap-3 border-t border-white/10 pt-6">

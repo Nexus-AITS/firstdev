@@ -1,7 +1,9 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { Route, Routes, useLocation, Navigate } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import useSmoothScroll from "./hooks/useSmoothScroll";
+import usePricing from "./hooks/usePricing.js";
+import { loadPricing } from "./data/pricing.js";
 import { AuthProvider } from "./context/AuthContext";
 import { TransitionProvider } from "./context/TransitionContext";
 import { RealmEntryProvider } from "./context/RealmEntryContext";
@@ -45,6 +47,20 @@ function RouteFallback() {
 export default function App() {
   const location = useLocation();
   useSmoothScroll();
+
+  /* Prices are owned by the database, so the public site has to ASK for them
+     once per page load. Without this call nothing ever fetched public.pricing
+     outside the console, and every price on /bundled, /events and /register was
+     the compiled-in fallback — which is why editing a price in the console
+     appeared to do nothing.
+
+     Deliberately not awaited and not blocking: the first paint renders the JS
+     fallbacks, and usePricing() re-renders every price surface when the
+     response lands. loadPricing() is single-flight, so the ~dozen components
+     that subscribe produce exactly one request. */
+  useEffect(() => {
+    loadPricing();
+  }, []);
 
   return (
     <AuthProvider>

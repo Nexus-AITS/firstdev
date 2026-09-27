@@ -55,11 +55,37 @@ Enforced by RLS, and mirrored in the UI only as a convenience.
 | ------------- | ------ | --------- | -------------- | ------- |
 | `coordinator` | read   | —         | —              | read    |
 | `admin`       | read + update | read | —        | read    |
-| `master`      | read + update + delete | read | create/change | read + write |
+| `master`      | read + update + delete | read | create / update / deactivate | read + write |
 
 `staff_at_least(role)` is the single predicate every policy calls; it resolves
 the header to a live session row on each request, so expiry, revocation and
 deactivation all take effect immediately.
+
+### Managing accounts from the panel
+
+A master does the full set from the Staff tab — no CLI, no SQL:
+
+- **Create** an account at any tier, including another master, with the
+  "Add an account" form.
+- **Read** the account list with role, status and last sign-in.
+- **Update** a role, a full name, or a password.
+- **Deactivate** to revoke access.
+
+Deactivation stands in for delete on purpose. `staff_users` rows are referenced
+by `staff_audit_log.staff_id` and by every payment confirmed under that
+username; removing a row would leave those actions attributed to an account that
+no longer exists. The database also refuses to deactivate or demote the last
+active master, so the panel cannot lock everyone out.
+
+Two details worth knowing. A password reset also revokes that account's live
+sessions — resetting the password while leaving the old session alive would not
+actually revoke anything. And `staff_update` treats a NULL argument as "leave
+this alone", which is how one call can change a role without touching a name.
+
+`npm run verify:staff-ui` drives all of this through the real console UI as a
+real master, against the live project, and asserts the results in the database
+and the audit log. It creates only marked probe accounts and removes them in a
+`finally` block.
 
 Two deliberate asymmetries:
 
@@ -110,6 +136,37 @@ only when the database has not answered on a cold first paint. `getPrice()`
 returns `null` rather than guessing, so a cold page renders `—` instead of a
 confidently wrong price.
 
+### The wiring, and why it was the hard part
+
+The schema was right from the start; the path from the table to the screen was
+not. Three separate defects meant an edited price never appeared anywhere, and
+every existing test still passed — because they all asserted against the same
+compiled-in constants that were being rendered:
+
+1. **Nothing on the public site ever fetched `pricing`.** `loadPricing()` was
+   only called from the console, so the store was empty everywhere else.
+2. **The components read the raw constants anyway.** `BundleCard` rendered
+   `bundle.price`; `EventRow`, `ParadoxCard`, `MetaRow` and `EventDetail`
+   rendered `event.payment`. The DB-first accessors (`getBundlePrice`,
+   `getEventFee`, `formatEventFee`) existed precisely for this and had no call
+   sites. This is also what made the bug easy to miss on review: the helpers
+   were right there in the file.
+3. **Nothing subscribed to price changes.** The store is mutated outside React,
+   so even a successful load would not have repainted anything.
+
+The fix is `loadPricing()` once at app start (`App.jsx`) plus `usePricing()`, a
+`useSyncExternalStore` subscription that each price-rendering component calls.
+`loadPricing()` is single-flight, so a dozen subscribers produce one request.
+Every price surface now reads through an accessor — including the UPI deep link
+on `/register`, which encodes the amount, and the `purchase_label` persisted on
+the registration row, which would otherwise have frozen a stale price into the
+roster permanently.
+
+`npm run verify:pricing` is the regression test. It moves a real price in the
+database and asserts the *rendered* page changes to match, then restores it. It
+is the only check that would have caught this, and it restores the price in a
+`finally` block so a failure cannot leave a fictional price on the public site.
+
 ## Security decisions worth calling out
 
 - **Tokens are stored hashed** (sha256). A database dump yields no usable
@@ -128,12 +185,21 @@ confidently wrong price.
 ## Verification
 
 ```
-npm run verify:staff   23/23 — real PostgREST, real token, real master account
-npm run verify:rls     30/30 — participant model, unchanged
-npm run verify          pass  — console gate: no roster, no social login
-npm test               13/13  — deploy/CSP/config invariants
-npm run build           pass
+npm run verify:staff      23/23 — real PostgREST, real token, real master account
+npm run verify:staff-ui   23/23 — staff CRUD driven through the real console UI
+npm run verify:pricing     6/6  — a price edit reaches the rendered public page
+npm run verify:rls        30/30 — participant model, unchanged
+npm run verify             pass — console gate: no roster, no social login
+npm test                  13/13 — deploy/CSP/config invariants
+npm run build              pass
 ```
+
+The two new checks are the ones that would have caught the defects described
+above. Both needed to exist: the features they cover were reported working by a
+suite that could not observe them, because it asserted against the same stale
+constants the UI was rendering. `verify:pricing` moves a real price and reads the
+price back out of the rendered DOM; `verify:staff-ui` signs in as a real master
+and creates, promotes and deactivates accounts through the actual form.
 
 `verify:staff` drives the endpoints the browser actually uses, rather than
 impersonating sessions inside SQL, so it would catch a header-name mismatch that

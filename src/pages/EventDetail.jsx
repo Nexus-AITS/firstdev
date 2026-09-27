@@ -6,12 +6,16 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
 import NotFound from "./NotFound.jsx";
-import { formatFee, getEventById, formatMaxSize } from "../data/events.js";
+import { formatEventFee, getEventById, getEventFee, formatMaxSize } from "../data/events.js";
 import { realms } from "../data/realms.js";
+import usePricing from "../hooks/usePricing.js";
 
 export default function EventDetail() {
   const { eventId } = useParams();
   const event = getEventById(eventId);
+  // Repaint the billing line when the database answers. The fee is read through
+  // getEventFee, so a price a master changed in the console is what shows here.
+  usePricing();
 
   if (!event) return <NotFound />;
 
@@ -117,12 +121,12 @@ export default function EventDetail() {
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
               Registration happens right here in the Nexus
             </p>
-            {/* `!= null`, not truthy: payment 0 must still render (as FREE). */}
-            {event.payment != null ? (
+            {/* `!= null`, not truthy: a fee of 0 must still render (as FREE). */}
+            {getEventFee(event.id) != null ? (
               <div className="mt-6 flex items-center justify-center gap-4">
                 <span aria-hidden className="h-px w-8 bg-gold/40" />
                 <p className="font-display text-[clamp(1.7rem,3.2vw,2.6rem)] font-medium text-gold [text-shadow:0_0_26px_rgba(245,215,142,0.45)]">
-                  {formatFee(event.payment)}
+                  {formatEventFee(event.id)}
                 </p>
                 <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/55">
                   {formatMaxSize(event.maxSize)}
@@ -143,8 +147,10 @@ export default function EventDetail() {
                 </CinematicButton>
             </div>
             <p className="mt-7 text-[10px] uppercase tracking-[0.32em] text-crystal/35">
-              {/* A free event has no QR and no UTR to paste — don't promise them. */}
-              {event.payment != null && Number(event.payment) > 0
+              {/* A free event has no QR and no UTR to paste — don't promise them.
+                  Tested against the LIVE fee, so dropping an event to 0 in the
+                  console also drops the payment copy, not just the number. */}
+              {getEventFee(event.id) > 0
                 ? "Details → payment QR → UTR — one short crossing"
                 : "Details → confirmation — one short crossing"}
             </p>

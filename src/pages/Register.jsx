@@ -7,8 +7,9 @@ import CinematicButton from "../components/ui/CinematicButton.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById } from "../data/events.js";
-import { getBundleById } from "../data/bundles.js";
+import { getEventById, getEventFee } from "../data/events.js";
+import { getBundleById, getBundlePrice } from "../data/bundles.js";
+import usePricing from "../hooks/usePricing.js";
 import {
   addRegistration,
   listRegistrations,
@@ -122,19 +123,28 @@ export default function Register() {
   // of the wrong state). `signedIn` alone is not enough to decide.
   const { signedIn, status, configured, configPending } = useAuth();
 
-  const fee = event ? (event.payment ?? null) : bundle ? bundle.price : null;
+  // The amount a participant is actually asked to pay. This must come from
+  // public.pricing, not from the JS constant: the UPI deep link below encodes
+  // `fee`, so reading the compiled-in value would have built a QR for a price
+  // the master had already changed. usePricing() re-runs this once the database
+  // answers, so the QR amount and the free/paid routing both follow the console.
+  usePricing();
+  const fee = event ? getEventFee(event.id) : bundle ? getBundlePrice(bundle.id) : null;
   // payment: 0 is an explicit FREE entry (events.js requires the field), so only
-  // a positive amount may route through the QR + UTR steps. Number() covers
-  // bundle prices, which are strings ("299").
+  // a positive amount may route through the QR + UTR steps. getEventFee and
+  // getBundlePrice both return a number (or null), so this is a plain compare.
   const paid = fee != null && Number(fee) > 0;
   const contextTitle = event ? event.title : bundle ? bundle.name : null;
   const returnTo = event ? `/events/${event.id}` : bundle ? "/bundled" : "/events";
   // What the participant is buying — recorded on the row (purchase_type +
   // purchase_label) so the admin panel can show which event / which bundle.
+  // The label is persisted on the registration row, so it must carry the LIVE
+  // price. Using `bundle.price` here would freeze whatever the JS constant said
+  // at registration time into the roster, even after a master changed it.
   const purchase = event
     ? { type: "event", label: event.title }
     : bundle
-      ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${bundle.price}` }
+      ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${getBundlePrice(bundle.id)}` }
       : null;
 
   const [step, setStep] = useState("details"); // details | pay | utr | done

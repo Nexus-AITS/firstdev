@@ -647,6 +647,16 @@ create policy pricing_master_write
   using (public.staff_at_least('master'))
   with check (public.staff_at_least('master'));
 
+-- The GRANT/REVOKE order matters (see the staff_users note above): RLS narrows
+-- privileges, it does not grant them, and Supabase's default grants ALL on every
+-- table in public to anon and authenticated. Left alone, anon held TRUNCATE,
+-- REFERENCES and TRIGGER on this table — more than any policy here describes.
+-- So: revoke everything, then grant back only what the two policies above guard.
+-- SELECT is what the public site needs; INSERT/UPDATE/DELETE are reachable only
+-- for a master, because pricing_master_write is the only other policy.
+revoke all on public.pricing from anon, authenticated;
+grant select, insert, update, delete on public.pricing to anon, authenticated;
+
 -- 12) staff RLS on registrations -----------------------------------------------
 -- coordinator: read only. admin: read + update (accept/reject). master: all.
 drop policy if exists staff_read_registrations on public.registrations;

@@ -1,14 +1,13 @@
-import { formatFee } from "../../data/events.js";
+import { formatEventFee } from "../../data/events.js";
+import usePricing from "../../hooks/usePricing.js";
 
 const ITEMS = [
   { key: "date", label: "Date" },
   { key: "venue", label: "Venue" },
   { key: "teamSize", label: "Team size" },
-  {
-    key: "payment",
-    label: "Payment",
-    format: formatFee,
-  },
+  // `live: true` means "resolve through public.pricing", not "read event.payment".
+  // The key is kept for the label and for the `!= null` data-gap check.
+  { key: "payment", label: "Payment", live: true },
   { key: "status", label: "Status" },
 ];
 
@@ -18,6 +17,9 @@ const ITEMS = [
  * columns so the white/10 backing never shows as an empty half-block.
  */
 export default function MetaRow({ event }) {
+  // Re-render when the database answers, so a console price edit reaches the
+  // PAYMENT cell instead of leaving the compiled-in constant on screen.
+  usePricing();
   const tail = ITEMS.length - 1;
   const oddTail = ITEMS.length % 2 === 1;
   return (
@@ -34,7 +36,7 @@ export default function MetaRow({ event }) {
         >
           <p className="text-[9px] font-medium uppercase tracking-[0.4em] text-lavender/70">{item.label}</p>
           <p className="mt-2.5 text-sm tracking-[0.12em] text-crystal md:text-[15px]">
-            {item.format ? item.format(event[item.key]) : event[item.key]}
+            {item.live ? formatEventFee(event.id) : event[item.key]}
           </p>
         </div>
       ))}

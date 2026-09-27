@@ -25,4 +25,7 @@ supabase/.branches/
 artifacts/
 preview.log
 preview.err
+# vite preview output captured by the ad-hoc harnesses in scripts/verify-*.mjs
+prev.out
+prev.err
 

@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatFee, formatMaxSize } from "../../data/events.js";
+import { formatEventFee, formatMaxSize, getEventFee } from "../../data/events.js";
+import usePricing from "../../hooks/usePricing.js";
 
 function ExploreLink({ id }) {
   return (
@@ -28,6 +29,10 @@ function ExploreLink({ id }) {
 /** NEXUS REBUILDERS — alternating cinematic event rows with ghost numerals. */
 export default function EventRow({ event, index = 0 }) {
   const flip = index % 2 === 1;
+  // Subscribe so a price changed in the console repaints this row, and read the
+  // DB-first fee rather than the compiled-in `event.payment` constant.
+  usePricing();
+  const fee = getEventFee(event.id);
 
   return (
     <article className="group relative border-t border-white/5 py-12 md:py-16">
@@ -62,10 +67,10 @@ export default function EventRow({ event, index = 0 }) {
             {event.tagline}
           </p>
 
-          {/* `!= null`, not truthy: payment 0 is a FREE entry, not "unknown". */}
-          {event.payment != null ? (
+          {/* `!= null`, not truthy: a fee of 0 is a FREE entry, not "unknown". */}
+          {fee != null ? (
             <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
-              {formatFee(event.payment)} · {formatMaxSize(event.maxSize)}
+              {formatEventFee(event.id)} · {formatMaxSize(event.maxSize)}
             </p>
           ) : null}
 

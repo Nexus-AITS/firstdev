@@ -250,6 +250,8 @@ npm run db:ping                     # reachable? is anon denied? how many rows?
 npm run db:query -- "<sql>"         # run read-only SQL as postgres (operator tool)
 npm run verify:rls                  # prove the participant RLS model (30 checks)
 npm run verify:staff                # prove the staff model (23 checks)
+npm run verify:staff-ui             # drive staff CRUD in the real console UI (23 checks)
+npm run verify:pricing              # prove a price edit reaches the public site (6 checks)
 npm run staff:bootstrap -- u "pw"   # create the FIRST master; closes once used
 npm run db:sync-pricing             # seed public.pricing from bundles.js / events.js
 ```
@@ -258,6 +260,14 @@ npm run db:sync-pricing             # seed public.pricing from bundles.js / even
 `.env` when present, so it exercises the three tiers as a real master instead of
 bootstrapping a throwaway one. It cleans up every account, session and audit row
 it creates.
+
+`verify:staff-ui` and `verify:pricing` both need `npm run preview` running on
+`:4173`, and both clean up after themselves — the first removes the probe
+accounts it creates, the second restores the price it moved. They exist because
+the two features they cover shipped broken while every other test passed:
+`StaffTab` never rendered its own "add account" form, and no public component
+ever read a price from the database. Each of those bugs sat behind a test suite
+that asserted against the same stale constants the UI was rendering.
 
 `npm test` (== `verify:deploy`) needs no network or credentials and guards the
 deploy shape: SPA fallback, CSP, no `VITE_`-prefixed vars, and the runtime
