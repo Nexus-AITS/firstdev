@@ -17,6 +17,8 @@ import {
   validateRegistration,
 } from "../data/registrations.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
+import EventSelection from "../components/register/EventSelection.jsx";
+import { setRegistrationEvents } from "../data/staff.js";
 
 /**
  * Registration wizard — the single place every event (and bundle) registration
@@ -147,7 +149,15 @@ export default function Register() {
       ? { type: "bundle", label: `${bundle.name} #${bundle.number} · ₹${getBundlePrice(bundle.id)}` }
       : null;
 
-  const [step, setStep] = useState("details"); // details | pay | utr | done
+  // A bundle with pick-pools needs the participant's choice BEFORE the payment
+  // QR, because the QR encodes the amount. The amount is the database's number
+  // either way (a bundle price is the total regardless of the choice), but the
+  // selection still has to be recorded against the registration row, and the row
+  // does not exist until `finalize` writes it. So the order is:
+  //   details -> select (only when a bundle has pools) -> pay -> utr
+  // A plain single-event registration has nothing to choose and skips it.
+  const needsSelection = Boolean(bundle?.includes?.some((line) => line.pick));
+  const [step, setStep] = useState("details"); // details | select | pay | utr | done
   const [form, setForm] = useState(emptyForm);
   const [utr, setUtr] = useState("");
   const [error, setError] = useState("");
@@ -158,12 +168,31 @@ export default function Register() {
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(null); // the row as stored, with its id
   const [mine, setMine] = useState([]); // this participant's own registrations
+  // The amount the DATABASE charged for the selection. Rendered in place of the
+  // locally-read fee once a selection has been saved, because that is the figure
+  // the payment is reconciled against. Null until then.
+  const [confirmedAmount, setConfirmedAmount] = useState(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const stepIndex = { details: 0, pay: 1, utr: 2, done: paid ? 3 : 2 }[step];
-  const stepList = paid
-    ? ["YOUR DETAILS", "PAYMENT QR", "PAYMENT REFERENCE"]
-    : ["YOUR DETAILS", "CONFIRM"];
+  /* The stepper is built from the same list the progress bar renders, and the
+     index is looked up in THAT list rather than from a fixed map. The map would
+     have to know that a bundle-with-pools inserts an extra step, and it would
+     drift the moment another conditional step is added — the progress bar would
+     highlight the wrong entry while the wizard itself advanced correctly. */
+  const stepList = [
+    { id: "details", label: "YOUR DETAILS" },
+    ...(needsSelection ? [{ id: "select", label: "CHOOSE EVENTS" }] : []),
+    ...(paid
+      ? [
+          { id: "pay", label: "PAYMENT QR" },
+          { id: "utr", label: "PAYMENT REFERENCE" },
+        ]
+      : [{ id: "done", label: "CONFIRM" }]),
+  ];
+  const stepIndex = Math.max(
+    0,
+    stepList.findIndex((s) => s.id === (step === "done" ? "done" : step))
+  );
 
   // While the session is still resolving the page must not claim to be either
   // signed in or signed out — the register/verify suite and a returning
@@ -188,21 +217,90 @@ export default function Register() {
       return;
     }
     setError("");
-    if (paid) setStep("pay");
+    // A bundle with pools needs the choice made and recorded before the QR,
+    // because the QR carries the amount the participant is about to pay.
+    if (needsSelection) setStep("select");
+    else if (paid) setStep("pay");
     else finalize(null);
   }
 
   /**
-   * Write the registration.
+   * Record the participant's event choice.
    *
-   * There is no local fallback: if the insert fails the participant is told and
+   * The registration row is written FIRST (so there is an id to attach the
+   * selection to) and the selection second. If the selection is refused the row
+   * survives without one, which is the recoverable state: the participant can
+   * retry the choice, and the operations team can still see the registration.
+   * The reverse order is not possible — the selection is keyed on the row.
+   *
+   * The amount comes back from the database and is what the QR is then built
+   * from, so the number on the QR and the number in the roster cannot drift.
+   */
+  async function saveSelection(chosenIds) {
+    setSaving(true);
+    setError("");
+
+    const { data: row, error: createError } = await addRegistration({
+      ...form,
+      utr_number: null,
+      purchase_type: purchase?.type ?? null,
+      purchase_label: purchase?.label ?? null,
+    });
+    if (createError) {
+      setSaving(false);
+      setError(createError);
+      return;
+    }
+
+    const result = await setRegistrationEvents({
+      registrationId: row.id,
+      bundleId: bundle?.id ?? null,
+      eventIds: chosenIds,
+    });
+    setSaving(false);
+
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setConfirmedAmount(result.amount);
+    setDone(row);
+    setMine((current) => [row, ...current]);
+    setStep(paid ? "pay" : "done");
+  }
+
+  /**
+   * Write the registration, or attach the UTR when the row already exists.
+   *
+   * There is no local fallback: if the write fails the participant is told and
    * stays on the step, because a success screen for a row the server never
    * accepted is the single worst outcome this flow can produce.
+   *
+   * The two-entry shape is not redundancy. A bundle-with-pools flow creates the
+   * row at the selection step, because the selection is keyed on the row and
+   * cannot be written first. By the time the UTR is submitted that row already
+   * exists, so this must SUBMIT THE REFERENCE to it. Inserting again would
+   * collide with uq_registrations_email — the participant would pay, paste a
+   * valid UTR, and be told they had "already registered".
    */
   async function finalize(utrValue) {
     if (saving) return;
     setSaving(true);
     setError("");
+
+    // A selection already wrote the row; only the reference is outstanding.
+    if (done?.id && utrValue != null) {
+      const { data, error: saveError } = await submitUtr(done.id, utrValue);
+      setSaving(false);
+      if (saveError) {
+        setError(saveError);
+        return;
+      }
+      setDone(data);
+      setMine((current) => current.map((r) => (r.id === data.id ? data : r)));
+      setStep("done");
+      return;
+    }
 
     const { data, error: saveError } = await addRegistration({
       ...form,
@@ -234,7 +332,19 @@ export default function Register() {
     return true;
   }
 
-  function submitUtr(e) {
+  /**
+   * The UTR form's submit handler.
+   *
+   * Named `handleUtrSubmit` rather than `submitUtr` on purpose. `submitUtr` is
+   * IMPORTED from the data layer, and a local function declaration of the same
+   * name shadows that import for this entire component — so `finalize` and
+   * `resubmitUtr`, which both call the data function, would silently call THIS
+   * one instead. It takes an event, so passing it a row id made it throw on
+   * `e.preventDefault()`: the button did nothing, no error was shown, and the
+   * UTR was never written. Shadowing by name is easy to miss in review because
+   * both call sites read as correct.
+   */
+  function handleUtrSubmit(e) {
     e.preventDefault();
     setError("");
     finalize(utr.trim());
@@ -262,8 +372,12 @@ export default function Register() {
     // listing it keeps the intent explicit without adding a second effect.
   }, [signedIn, authReady]);
 
+  // The QR must encode the amount the DATABASE charged. Once a selection has
+  // been saved that figure exists; before it, fall back to the price the
+  // pricing store reports (which is also server-sourced, just read earlier).
+  const payable = confirmedAmount ?? fee;
   const upiUrl = paid
-    ? buildUpiUrl({ amount: fee, note: contextTitle || "NEXUS registration" })
+    ? buildUpiUrl({ amount: payable, note: contextTitle || "NEXUS registration" })
     : "";
 
   return (
@@ -319,9 +433,9 @@ export default function Register() {
               }`}
               aria-label="Registration progress"
             >
-              {stepList.map((label, i) => (
+              {stepList.map((s, i) => (
                 <li
-                  key={label}
+                  key={s.id}
                   className={`flex items-center gap-2.5 text-[10px] uppercase tracking-[0.28em] ${
                     i <= stepIndex ? "text-lavender" : "text-crystal/35"
                   }`}
@@ -335,7 +449,7 @@ export default function Register() {
                         : "bg-crystal/25"
                     }`}
                   />
-                  {String(i + 1).padStart(2, "0")} {label}
+                  {String(i + 1).padStart(2, "0")} {s.label}
                 </li>
               ))}
             </ol>
@@ -486,7 +600,32 @@ export default function Register() {
                   </div>
                 </form>
               ) : null}
-              {/* ---------------- step 2: payment QR ---------------- */}
+              {/* --------------- step 2 (conditional): choose events --------------- */}
+              {signedIn && step === "select" && bundle ? (
+                <div id="reg-step-select" className="flex flex-col gap-6">
+                  <header>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">
+                      Step 02
+                    </p>
+                    <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
+                      CHOOSE YOUR EVENTS
+                    </h2>
+                    <p className="mt-3 text-sm leading-relaxed text-crystal/60">
+                      This bundle covers the events you pick below. The ₹
+                      {payable} you pay is the bundle total and does not change
+                      with your choice.
+                    </p>
+                  </header>
+                  <EventSelection
+                    bundle={bundle}
+                    onSave={saveSelection}
+                    saving={saving}
+                    error={error}
+                  />
+                </div>
+              ) : null}
+
+              {/* ---------------- step 3: payment QR ---------------- */}
               {signedIn && step === "pay" ? (
                 <div id="reg-step-pay" className="flex flex-col gap-6 text-center">
                   <header>
@@ -496,7 +635,7 @@ export default function Register() {
                     </h2>
                     <p className="mt-3 text-sm leading-relaxed text-crystal/55">
                       Scan with any UPI app and pay{" "}
-                      <span className="text-gold">₹{fee}</span>
+                      <span className="text-gold">₹{payable}</span>
                       {contextTitle ? ` for ${contextTitle}` : ""}. Keep the
                       transaction reference — you will paste it next.
                     </p>
@@ -534,7 +673,7 @@ export default function Register() {
                   <ul className="mx-auto flex max-w-md flex-col gap-1.5 text-[11px] leading-relaxed text-crystal/50">
                     <li>UPI id: <span className="text-crystal/80">{PAYMENT_VPA || "— not configured —"}</span></li>
                     <li>Payee: <span className="text-crystal/80">{PAYEE_NAME}</span></li>
-                    <li>Amount: <span className="text-gold">₹{fee}</span> exactly</li>
+                    <li>Amount: <span className="text-gold">₹{payable}</span> exactly</li>
                   </ul>
 
                   <div className="flex flex-wrap items-center justify-between gap-5">
@@ -678,6 +817,20 @@ export default function Register() {
                           {r.college_name} · {r.roll_number}
                           {r.utr_number ? ` · UTR ${r.utr_number}` : ""}
                         </p>
+                        {/* Told plainly, because there is nothing the participant
+                            can do about it from here. The events are locked and
+                            the database will refuse a change; the only route is
+                            to ask the operations team, so this says who to ask
+                            rather than leaving them to discover the refusal by
+                            trying. */}
+                        {r.selection_frozen ? (
+                          <p
+                            className="text-[10px] uppercase tracking-[0.2em] text-gold/85"
+                            data-selection-frozen="true"
+                          >
+                            Event selection final — contact the operations team to change it
+                          </p>
+                        ) : null}
                         {r.payment_status === "rejected" ? (
                           <RejectedUtrForm
                             rowId={r.id}

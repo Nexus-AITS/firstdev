@@ -26,9 +26,18 @@ const EXPIRY_KEY = "nexus.staff.expires.v1";
 export const ROLE_META = {
   master: {
     label: "Master administrator",
-    can: ["read", "verify", "reject", "remove", "manage_staff", "edit_pricing", "view_audit"],
+    can: [
+      "read",
+      "verify",
+      "reject",
+      "remove",
+      "manage_staff",
+      "edit_pricing",
+      "view_audit",
+      "manage_catalogue",
+    ],
     blurb:
-      "Full control: verify or reject payments, remove registrations, manage staff, and set prices.",
+      "Full control: verify or reject payments, remove registrations, manage staff, set prices, and edit the event and bundle catalogue.",
   },
   admin: {
     label: "Administrator",
@@ -534,6 +543,33 @@ export async function staffRetireBundle(id, token) {
 export async function staffRetireEvent(id, token) {
   return rpc("staff_retire_event", { p_event_id: id }, token);
 }
+
+/**
+ * Freeze or re-open a participant's event selection.
+ *
+ * Asymmetric on purpose, mirroring the database: an admin may freeze (routine,
+ * protective, reversible), but only a master may lift it. The console surfaces
+ * the server's own sentence when it refuses, because it is written for the
+ * operator ("Pass the request to them") and is more useful than anything this
+ * layer could invent.
+ */
+export async function staffSetSelectionFreeze(token, registrationId, frozen) {
+  const result = await rpc(
+    "staff_set_selection_freeze",
+    { p_registration_id: registrationId, p_frozen: frozen },
+    token
+  );
+  if (!result.ok) {
+    return {
+      ok: false,
+      error:
+        result.body?.error ??
+        "That selection could not be changed. Please try again.",
+    };
+  }
+  return { ok: true, frozen: Boolean(result.body?.frozen), error: null };
+}
+
 
 /* ---------- event selection ---------- */
 

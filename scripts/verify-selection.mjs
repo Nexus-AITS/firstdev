@@ -191,10 +191,22 @@ try {
   const byEvent = await (
     await rpc("staff_export_registrations", { p_event: "nexus-breach" }, token)
   ).json();
+  /* Asserted against the PROBE, not against a global row count. This suite runs
+     against the live database, which holds real registrations: a participant who
+     legitimately bought NEXUS BREACH also appears in this filter, and asserting
+     "exactly one row" would fail on correct behaviour the moment the first real
+     person registered for that event. What is actually being claimed is that the
+     probe row carrying the event comes back and the probe row that does not is
+     excluded — so that is what is checked. */
+  const probeRows = (byEvent ?? []).filter((r) => r.name?.startsWith(TAG));
   out(
-    (byEvent ?? []).length === 1 && byEvent[0].name === `${TAG} after midnight`,
-    "filtering by event returns only registrations carrying it",
+    probeRows.length === 1 && probeRows[0].name === `${TAG} after midnight`,
+    "filtering by event returns the registrations carrying it",
     (byEvent ?? []).map((r) => r.name).join(", ") || "none"
+  );
+  out(
+    !(byEvent ?? []).some((r) => r.name === `${TAG} next day`),
+    "a registration WITHOUT the event is excluded by the filter"
   );
   out(
     (byEvent ?? [])[0]?.events === "nexus-breach",

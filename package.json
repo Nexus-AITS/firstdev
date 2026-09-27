@@ -34,6 +34,8 @@
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",
     "verify:selection": "node scripts/verify-selection.mjs",
+    "verify:catalogue": "node scripts/verify-catalogue.mjs",
+    "verify:freeze": "node scripts/verify-freeze.mjs",
     "db:query": "node scripts/db-query.mjs",
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
     "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap"

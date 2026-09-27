@@ -23,6 +23,7 @@ import {
   can,
   staffCreate,
   staffDeleteRegistration,
+  staffExportRegistrations,
   staffListAudit,
   staffListPricing,
   staffListRegistrations,
@@ -32,9 +33,13 @@ import {
   staffResume,
   staffRevokeSessions,
   staffSetPrice,
+  staffSetSelectionFreeze,
   staffSetStatus,
   staffUpdate,
+  loadPublicCatalogue,
 } from "../data/staff.js";
+import { buildRosterWorkbook, downloadXlsx } from "../lib/xlsx.js";
+import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import { bundles } from "../data/bundles.js";
 import { events } from "../data/events.js";
 import { loadPricing, subscribePricing } from "../data/pricing.js";
@@ -46,6 +51,10 @@ const TABS = [
   { id: "audit", label: "Audit log", action: "view_audit" },
   { id: "staff", label: "Staff", action: "manage_staff" },
   { id: "pricing", label: "Pricing", action: "edit_pricing" },
+  // The catalogue is master-only, matching the RPCs' own staff_at_least('master')
+  // gate. Hiding it from coordinators is a courtesy; the database is what
+  // actually refuses the write.
+  { id: "catalogue", label: "Catalogue", action: "manage_catalogue" },
 ];
 
 /**
@@ -97,7 +106,18 @@ const EMPTY_WINDOW = { data: [], total: null, page: 1, pageCount: 1, error: null
  *  counted, and refreshable, but not split. PricingTab refuses to edit if it
  *  ever outgrows MAX_PAGE_SIZE. */
 const DEFAULT_PAGING = {
-  registrations: { page: 1, pageSize: 25, query: "", status: "all" },
+  registrations: {
+    page: 1,
+    pageSize: 25,
+    query: "",
+    status: "all",
+    // The event and date filters join the roster tab's own filter set. `all` and
+    // the empty string are the "not filtering" values, and staffListRegistrations
+    // drops both before building the query.
+    event: "all",
+    fromDate: "",
+    toDate: "",
+  },
   audit: { page: 1, pageSize: 25, action: "all" },
   staff: { page: 1, pageSize: 25 },
   pricing: { page: 1, pageSize: MAX_PAGE_SIZE },
@@ -423,7 +443,85 @@ function RosterTab({
   }, [paging.query, term]);
 
   const rows = win.data;
-  const filtering = paging.query.trim() !== "" || paging.status !== "all";
+  const [catalogueEvents, setCatalogueEvents] = useState([]);
+  const [exporting, setExporting] = useState(false);
+
+  /* The event filter's options come from the catalogue, so the console never
+     offers an event the database does not know about — which would filter to
+     nothing and read as broken. A failed load is non-fatal: the filter simply
+     stays on "All events". */
+  useEffect(() => {
+    let alive = true;
+    loadPublicCatalogue().then(({ events: list }) => {
+      if (alive && Array.isArray(list)) setCatalogueEvents(list);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /**
+   * Download the roster as a spreadsheet.
+   *
+   * The rows come from the export RPC, NOT from the paged list above. The pager
+   * shows 25 at a time, so building the file from what is on screen would hand an
+   * operator reconciling a payment sheet a fraction of the truth — and a file
+   * whose row count silently depends on which page they happened to be viewing.
+   *
+   * The date and event filters are passed through so the file matches what the
+   * operator is looking at. The search text is deliberately NOT: the export RPC
+   * has no such parameter, and silently exporting a different set than the one on
+   * screen would be worse than not honouring it.
+   */
+  async function exportRoster() {
+    if (exporting) return;
+    setExporting(true);
+    setNotice(null);
+    const result = await staffExportRegistrations(session.token, {
+      fromDate: paging.fromDate || null,
+      toDate: paging.toDate || null,
+      event: paging.event ?? "all",
+      status: paging.status ?? "all",
+    });
+    setExporting(false);
+
+    if (!result.ok) {
+      setNotice({ kind: "error", text: "The export could not be prepared. Please try again." });
+      return;
+    }
+    if (!result.rows.length) {
+      setNotice({
+        kind: "error",
+        text: "No registrations match these filters, so there is nothing to export.",
+      });
+      return;
+    }
+
+    // Named for what was filtered, so a file forwarded to a reconciler says what
+    // it contains without anyone having to open it.
+    const scope = paging.event !== "all" ? `-${paging.event}` : "";
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadXlsx(
+      buildRosterWorkbook(
+        result.rows,
+        `${paging.fromDate || "all"}-to-${paging.toDate || "all"}${scope}`
+      ),
+      `nexus-roster-${stamp}${scope}.xlsx`
+    );
+    setNotice({
+      kind: "ok",
+      text: `Exported ${result.rows.length} registration${result.rows.length === 1 ? "" : "s"}.`,
+    });
+  }
+
+  // Every one of these narrows the set, and each has to count as "filtering" or
+  // the summary line would read "Newest first" over a filtered result.
+  const filtering =
+    paging.query.trim() !== "" ||
+    paging.status !== "all" ||
+    paging.event !== "all" ||
+    Boolean(paging.fromDate) ||
+    Boolean(paging.toDate);
 
   async function act(id, run, message) {
     setBusyId(id);
@@ -441,6 +539,36 @@ function RosterTab({
   }
 
   const readOnly = !can(role, "verify");
+
+  /**
+   * Freeze or re-open a selection.
+   *
+   * Separate from `act()` because it deliberately shows the SERVER's message.
+   * `act()` replaces failures with a generic sentence, which is right for the
+   * routine buttons — but the whole point here is that an admin who tries to lift
+   * a freeze is told only a master can, and that sentence is the only thing
+   * explaining what to do next. A generic "that did not go through" would leave
+   * them with no way forward.
+   */
+  async function toggleFreeze(row) {
+    if (busyId) return;
+    const next = !row.selection_frozen;
+    setBusyId(row.id);
+    setNotice(null);
+    const result = await staffSetSelectionFreeze(session.token, row.id, next);
+    setBusyId(null);
+    if (!result.ok) {
+      setNotice({ kind: "error", text: result.error });
+      return;
+    }
+    setNotice({
+      kind: "ok",
+      text: next
+        ? `${row.name}'s event selection is now final. Only a master can re-open it.`
+        : `${row.name}'s event selection is open again.`,
+    });
+    reload();
+  }
 
   return (
     <section>
@@ -474,6 +602,88 @@ function RosterTab({
             <option value="rejected">Rejected</option>
             <option value="unverified">Unverified</option>
           </select>
+        </div>
+
+        {/* The event filter narrows to registrations that actually carry the
+            event. It is driven by the catalogue, not a hardcoded list, so a new
+            event becomes filterable the moment the database knows about it. */}
+        <div>
+          <label htmlFor="roster-event" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
+            Event
+          </label>
+          <select
+            id="roster-event"
+            value={paging.event}
+            onChange={(e) => setFilter({ event: e.target.value })}
+            className="mt-2 max-w-[16rem] border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
+          >
+            <option value="all">All events</option>
+            {catalogueEvents.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.title}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Calendar dates, not timestamps. The data layer appends the +05:30 day
+            boundary itself; sending a full ISO instant from the browser would
+            hand Postgres a UTC value and quietly cut the day at 05:30 IST. */}
+        <div>
+          <label htmlFor="roster-from" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
+            From
+          </label>
+          <input
+            id="roster-from"
+            type="date"
+            value={paging.fromDate}
+            max={paging.toDate || undefined}
+            onChange={(e) => setFilter({ fromDate: e.target.value })}
+            className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
+          />
+        </div>
+        <div>
+          <label htmlFor="roster-to" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
+            To
+          </label>
+          <input
+            id="roster-to"
+            type="date"
+            value={paging.toDate}
+            min={paging.fromDate || undefined}
+            onChange={(e) => setFilter({ toDate: e.target.value })}
+            className="mt-2 border border-line bg-void-raised px-3 py-2 font-mono text-sm text-bone outline-none transition focus:border-violet-bright"
+          />
+        </div>
+
+        <div className="ml-auto flex flex-wrap items-end gap-3">
+          {filtering ? (
+            <button
+              type="button"
+              data-action="roster-reset"
+              onClick={() =>
+                setFilter({
+                  query: "",
+                  status: "all",
+                  event: "all",
+                  fromDate: "",
+                  toDate: "",
+                })
+              }
+              className="border border-line px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ash transition hover:border-violet-bright hover:text-bone"
+            >
+              Clear filters
+            </button>
+          ) : null}
+          <button
+            type="button"
+            data-action="roster-export"
+            disabled={exporting}
+            onClick={exportRoster}
+            className="border border-violet-bright/60 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-bone transition hover:border-violet-bright disabled:opacity-50"
+          >
+            {exporting ? "Preparing…" : "Export to Excel"}
+          </button>
         </div>
       </div>
 
@@ -535,6 +745,21 @@ function RosterTab({
                     Verified by {r.payment_verified_by} on {when(r.payment_verified_at)}
                   </p>
                 ) : null}
+                {/* A frozen selection is the one fact on this card that changes
+                    what the operator may do next, so it is stated in words rather
+                    than left to the button. "Final" is the word that matters: it
+                    tells whoever is reading that the participant cannot change
+                    this and that only a master can. */}
+                {r.selection_frozen ? (
+                  <p
+                    className="mt-1 font-mono text-xs text-gold"
+                    data-selection-frozen="true"
+                  >
+                    Event selection FINAL
+                    {r.selection_frozen_by ? ` · frozen by ${r.selection_frozen_by}` : ""}
+                    {r.selection_frozen_at ? ` on ${when(r.selection_frozen_at)}` : ""}
+                  </p>
+                ) : null}
               </div>
               <StatusPill status={r.payment_status} />
             </div>
@@ -563,6 +788,26 @@ function RosterTab({
                     )
                   }
                 />
+                {/* Freezing is offered to anyone who can verify — it is the
+                    routine, protective action. Re-opening is offered ONLY to a
+                    master, matching the server, so an admin is never invited to
+                    click a button whose answer is always no. An admin looking at
+                    a frozen row sees the FINAL note and no way to undo it, which
+                    is exactly the path the product asks for: the request goes to
+                    a master. */}
+                {!r.selection_frozen ? (
+                  <ActionButton
+                    label="Freeze selection"
+                    disabled={busyId === r.id}
+                    onClick={() => toggleFreeze(r)}
+                  />
+                ) : role === "master" ? (
+                  <ActionButton
+                    label="Re-open selection"
+                    disabled={busyId === r.id}
+                    onClick={() => toggleFreeze(r)}
+                  />
+                ) : null}
               </div>
             ) : null}
 
@@ -1435,6 +1680,10 @@ function Console({ session, onExpired }) {
             setPageSize={(size) => setPageSize("pricing", size)}
           />
         ) : null}
+        {/* The catalogue loads and saves itself (public_catalogue is one unpaged
+            JSON document, not a PostgREST list), so it takes no window, no pager
+            and no reload wiring from this shell. */}
+        {active?.id === "catalogue" ? <CatalogueManager session={session} /> : null}
       </div>
     </main>
   );

@@ -159,11 +159,29 @@ on conflict (id) do nothing;
 -- inactive, the lines go in, the trigger fills each key, and only then does the
 -- final UPDATE publish them. Activating inline in the VALUES list is the obvious
 -- thing to write and it fails the CHECK on the very first bundle.
-insert into public.bundle_catalogue
-  (id, number, name, group_id, kicker, title_lines, sort_order, is_active, content_key)
-values
+
+-- Which bundles did THIS run actually insert? Captured in a temp table rather
+-- than inferred, because the publish step below must not touch anything else.
+--
+-- The bug this replaces: the publish was
+--     where bc.is_active = false and bc.content_key <> '' and exists (include)
+-- which reads like a seed-scoped update but is not scoped to the seed AT ALL.
+-- Re-running the migration after a master had deliberately retired a seeded
+-- bundle would flip it back on: the row is inactive, has a content key and has
+-- include lines, so it satisfies every clause — the retirement is silently
+-- undone, and the bundle reappears on the public site. ON CONFLICT DO NOTHING
+-- protects the INSERT; nothing protected the UPDATE.
+create temporary table nexus_seed_publish (id text primary key) on commit drop;
+
+with seeded as (
+  insert into public.bundle_catalogue
+    (id, number, name, group_id, kicker, title_lines, sort_order, is_active, content_key)
+  values
 ${bundleRows.join(",\n")}
-on conflict (id) do nothing;
+  on conflict (id) do nothing
+  returning id
+)
+insert into nexus_seed_publish (id) select id from seeded;
 
 insert into public.bundle_includes
   (bundle_id, position, event_id, pick_realm, pick_count, exclude_hackathon)
@@ -171,14 +189,17 @@ values
 ${includeRows.join(",\n")}
 on conflict (bundle_id, position) do nothing;
 
--- Publish. Scoped to the rows this seed just inserted, so re-running never
--- revives a bundle a master deliberately retired, and never disturbs a bundle
--- whose lines a master has since edited.
+-- Publish ONLY the rows this run inserted, and only once their lines have given
+-- them a key. Both guards are load-bearing and neither replaces the other:
+--   * the temp table is what stops a retired bundle being revived on a re-run;
+--   * content_key/exists stop publishing a parent whose include lines did not
+--     land, which would otherwise abort the whole migration on the CHECK.
 update public.bundle_catalogue bc
    set is_active = true
  where bc.is_active = false
    and bc.content_key <> ''
-   and exists (select 1 from public.bundle_includes bi where bi.bundle_id = bc.id);
+   and exists (select 1 from public.bundle_includes bi where bi.bundle_id = bc.id)
+   and bc.id in (select id from nexus_seed_publish);
 
 -- public.pricing is the price authority and the console edits it, so this seed
 -- only fills ABSENT rows. ON CONFLICT DO NOTHING is what stops a regenerated seed

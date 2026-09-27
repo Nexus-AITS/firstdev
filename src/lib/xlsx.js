@@ -314,6 +314,72 @@ export function buildXlsx({ sheetName = "Sheet1", columns = [], rows = [] }) {
   return zip(files);
 }
 
+/**
+ * Build the roster spreadsheet.
+ *
+ * The column order is the order a reconciler works in: who, how to reach them,
+ * what they bought, what they owe. `si_no` first because the database already
+ * numbered the rows, and re-deriving it here would invite a second, different
+ * ordering than the one the operator sees on screen.
+ *
+ * Amounts are typed as numbers, not text. A text "₹349" cannot be summed in
+ * Excel, and a reconciler totalling a column of text cells gets zero — which
+ * looks like a real answer. The rupee sign belongs in the header or nowhere.
+ */
+export function buildRosterWorkbook(rows, scope) {
+  const columns = [
+    { header: "SI.NO", width: 8, type: "number" },
+    { header: "NAME", width: 26 },
+    { header: "PHONE", width: 16 },
+    { header: "UTR NUMBER", width: 20 },
+    { header: "REG DATE", width: 13 },
+    { header: "REG TIME", width: 11 },
+    { header: "STATUS", width: 15 },
+    { header: "PURCHASE", width: 32 },
+    { header: "AMOUNT", width: 11, type: "number" },
+    { header: "EVENTS", width: 34 },
+    { header: "FINAL", width: 8 },
+    { header: "FROZEN BY", width: 16 },
+    { header: "EMAIL", width: 28 },
+    { header: "COLLEGE", width: 26 },
+    { header: "ROLL NUMBER", width: 16 },
+    { header: "YEAR", width: 8 },
+    { header: "DEPARTMENT", width: 20 },
+  ];
+
+  const body = rows.map((r) => [
+    r.si_no,
+    r.name,
+    r.phone_number,
+    r.utr_number,
+    r.reg_date,
+    r.reg_time,
+    r.payment_status,
+    r.purchase_label,
+    // A null amount is a real state (a registration whose price was never set).
+    // Coerced to 0 so the cell stays numeric and the column still totals; an
+    // empty string here would reintroduce the text-in-a-number-column problem.
+    r.purchase_amount == null ? 0 : Number(r.purchase_amount),
+    r.events,
+    // "YES"/"" rather than true/false: this column is read by a person
+    // reconciling a payment, and a blank is easier to scan past than the word
+    // FALSE on every one of four hundred open rows.
+    r.selection_frozen ? "YES" : "",
+    r.frozen_by,
+    r.email,
+    r.college_name,
+    r.roll_number,
+    r.year,
+    r.department,
+  ]);
+
+  return buildXlsx({
+    sheetName: scope || "Roster",
+    columns,
+    rows: body,
+  });
+}
+
 /** Hand a Uint8Array to the browser as a download. */
 export function downloadXlsx(bytes, filename) {
   const blob = new Blob([bytes], {
