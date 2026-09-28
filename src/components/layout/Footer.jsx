@@ -48,12 +48,15 @@ export default function Footer() {
 
         <div className="hairline my-10" aria-hidden />
 
-        <div className="flex flex-col gap-4 text-[10px] uppercase tracking-[0.32em] text-crystal/35 md:flex-row md:items-center md:justify-between">
+        {/* /35 measured 2.88:1 against #050308 — Lighthouse fails it at 4.5:1.
+            /50 lands at ~4.9:1 and is what the rest of this footer already
+            uses, so the row reads as one weight instead of two. */}
+        <div className="flex flex-col gap-4 text-[10px] uppercase tracking-[0.32em] text-crystal/50 md:flex-row md:items-center md:justify-between">
           <p>Connect • Create • Transcend</p>
           <p>© {new Date().getFullYear()} NEXUS — All realms reserved.</p>
         </div>
 
-        <p className="mt-6 text-center text-[10px] uppercase tracking-[0.32em] text-crystal/35 md:text-left">
+        <p className="mt-6 text-center text-[10px] uppercase tracking-[0.32em] text-crystal/50 md:text-left">
           Developed by Omprakash Chandragiri and Sai Sujith BV from CSIT Department
         </p>
       </div>

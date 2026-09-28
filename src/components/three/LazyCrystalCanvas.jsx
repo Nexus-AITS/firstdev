@@ -1,6 +1,29 @@
 import { Suspense, lazy } from "react";
 
-const CrystalCanvas = lazy(() => import("./CrystalCanvas.jsx"));
+/**
+ * three.js is the largest chunk in the project AND the most expensive thing
+ * the browser can do at startup (parse + compile ~850 kB of JS, then create a
+ * WebGL context). Importing it the instant <Home/> mounts puts that work
+ * squarely inside the first-paint window — Lighthouse measured 4.19 s of the
+ * 4.64 s LCP as pure "render delay" (i.e. main-thread work before paint).
+ *
+ * Gating the dynamic import behind requestIdleCallback (with a timeout so it
+ * always arrives) lets React paint the hero, the navbar and the story beats
+ * first; the CSS Backdrop in the Suspense fallback holds the exact footprint
+ * until the stage is ready. Nothing is removed — it just starts a beat later.
+ */
+function onIdle(fn) {
+  if (typeof window === "undefined") return;
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(fn, { timeout: 2500 });
+  } else {
+    setTimeout(fn, 350);
+  }
+}
+
+const CrystalCanvas = lazy(
+  () => new Promise((resolve, reject) => onIdle(() => import("./CrystalCanvas.jsx").then(resolve, reject)))
+);
 
 /**
  * Three.js is the largest chunk in the project — this wrapper keeps it off

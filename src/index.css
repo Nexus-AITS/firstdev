@@ -338,6 +338,25 @@
 }
 
 /**
+ * `nexus-sheen` animates `background-position`, which is NOT a composited
+ * property: Chrome has to re-rasterise the glyphs on the main thread every
+ * frame. PageSpeed counted exactly these six elements (the "AITS TIRUPATI"
+ * line plus the five NEXUS letters — i.e. the LCP element) as the
+ * "6 non-composited animated elements" on the homepage.
+ *
+ * On phones and coarse pointers the sweep is frozen on frame 0 of the very
+ * same keyframes, so a screenshot is pixel-identical to the animated version
+ * while the largest painted element stops repainting at 60fps. Desktop keeps
+ * the moving highlight.
+ */
+@media (pointer: coarse), (max-width: 767px) {
+  .text-sheen {
+    animation: none;
+    background-position: 100% 50%;
+  }
+}
+
+/**
  * Bloom for the wordmark. Sits on the container so the whole word is
  * filtered once (two drop-shadow passes) rather than once per glyph.
  */

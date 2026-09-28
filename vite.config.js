@@ -201,13 +201,64 @@ export default defineConfig(({ mode }) => {
     build: {
       target: "es2020",
       chunkSizeWarningLimit: 900,
+      /**
+       * Source maps for the first-party bundle.
+       *
+       * PageSpeed flags "Missing source maps for large first-party JavaScript",
+       * and without them a production stack trace is unrecoverable. This is safe
+       * to publish here because the bundle contains no secrets: Supabase
+       * credentials are fetched at RUNTIME from /api/config (they are never
+       * VITE_-inlined), api/config.js is a serverless function that Vite never
+       * bundles, and .env never reaches the client. The anon key is public by
+       * design — Row Level Security is the actual gate.
+       *
+       * Trade-off, stated plainly: readable source. If a future change puts a
+       * privileged value into the client bundle, switch this to `false` (or to
+       * `"hidden"`, which emits .map files without the sourceMappingURL comment
+       * so they are not advertised — note that Lighthouse would then flag it
+       * again).
+       */
+      sourcemap: true,
       rollupOptions: {
         output: {
-          manualChunks: {
-            react: ["react", "react-dom", "react-router-dom"],
-            three: ["three", "@react-three/fiber"],
-            gsap: ["gsap"],
-            motion: ["framer-motion"],
+          /**
+           * Chunking — and the one subtlety that decides what is in the critical
+           * path of every route.
+           *
+           * `manualChunks` is deliberately a FUNCTION, not the usual object
+           * shorthand. The object form (`{ three: ["three"] }`) makes Rollup
+           * treat each listed package as an implicit ENTRY chunk, so Vite emits
+           * `<link rel="modulepreload">` for it in index.html even when nothing
+           * in the initial graph imports it. On this app that put an 860 kB
+           * (232 kB gzip) three.js preload plus the @react-three/fiber runtime
+           * into the critical path of *every* route — including the ones with no
+           * WebGL at all — and was the largest single contributor to the ~4.2 s
+           * of LCP render delay PageSpeed reported.
+           *
+           * The function form only *names* a chunk; it does not promote it to an
+           * entry. three is reached exclusively through dynamic `import()`
+           * (LazyCrystalCanvas / LazyRealmStage), so its chunk stays behind the
+           * Suspense boundary and streams on demand instead of being preloaded.
+           * react and framer-motion are genuine static imports of the entry (and
+           * gsap is too, via useSmoothScroll ← App), so those chunks are still
+           * preloaded — as they should be. The split above exists so the vendor
+           * code stays cached across deploys, not to hide it.
+           */
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return undefined;
+            const path = id.replace(/\\/g, "/");
+            // three itself plus the R3F runtime it renders through.
+            if (/\/node_modules\/(?:three|@react-three\/[^/]+)\//.test(path)) return "three";
+            if (/\/node_modules\/(?:gsap|@gsap)\//.test(path)) return "gsap";
+            // framer-motion ships as several packages; keep them together so
+            // the version pairing can never drift across chunks.
+            if (/\/node_modules\/(?:framer-motion|motion-dom|motion-utils)\//.test(path)) {
+              return "motion";
+            }
+            if (/\/node_modules\/(?:react|react-dom|react-router|react-router-dom|scheduler)\//.test(path)) {
+              return "react";
+            }
+            return undefined;
           },
         },
       },

@@ -80,7 +80,7 @@ export default function Events() {
           {/* staged typography: WELCOME -> THREE REALMS -> CHOOSE */}
           <div className="flex flex-col items-center text-center">
             <p
-              className={`mb-6 text-[10px] font-medium uppercase tracking-[0.55em] text-lavender/70 transition-all duration-1000 ${
+              className={`mb-6 text-[10px] font-medium uppercase tracking-[0.55em] text-lavender/70 transition-[translate,opacity] duration-1000 ${
                 ready ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
               }`}
               style={{ transitionDelay: "150ms" }}
@@ -88,7 +88,7 @@ export default function Events() {
               Nexus // Realm gateway
             </p>
             <h1
-              className={`font-display text-[clamp(2.3rem,6.4vw,5.6rem)] leading-[1.04] tracking-[0.06em] text-crystal text-glow transition-all duration-[1200ms] ${
+              className={`font-display text-[clamp(2.3rem,6.4vw,5.6rem)] leading-[1.04] tracking-[0.06em] text-crystal text-glow transition-[translate,opacity] duration-[1200ms] ${
                 ready ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0"
               }`}
               style={{ transitionDelay: "320ms" }}
@@ -96,7 +96,7 @@ export default function Events() {
               WELCOME TO THE NEXUS
             </h1>
             <div
-              className={`mt-7 transition-all duration-[1100ms] ${
+              className={`mt-7 transition-[translate,opacity] duration-[1100ms] ${
                 ready ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"
               }`}
               style={{ transitionDelay: "780ms" }}
@@ -109,7 +109,7 @@ export default function Events() {
               </p>
             </div>
             <div
-              className={`mt-9 flex flex-col items-center gap-4 transition-all duration-[1100ms] ${
+              className={`mt-9 flex flex-col items-center gap-4 transition-[translate,opacity] duration-[1100ms] ${
                 ready ? "translate-y-0 opacity-100" : "translate-y-5 opacity-0"
               }`}
               style={{ transitionDelay: "1240ms" }}
