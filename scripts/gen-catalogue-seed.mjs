@@ -70,6 +70,21 @@ const intOrNull = (v) => (v == null ? "null" : String(Number(v)));
 
 /* ---------- events ---------- */
 
+/**
+ * The seed's legacy `max_size`, derived from the structured fields.
+ *
+ * The generated seed is spliced into migration ...007, which runs BEFORE the
+ * entry-type migration ...014 that introduces entry_type/max_team_members — so
+ * at the point the seed executes, those columns do not exist yet and the cap has
+ * to travel in the old packed form. ...014 then backfills the pair from it.
+ *
+ * Deriving it here rather than hand-writing it is the point: events.js now
+ * declares the entry rule once, and this is that declaration being re-expressed
+ * for an older column instead of a second copy that can drift.
+ */
+const legacyMaxSize = (e) =>
+  e.entryType === "team" ? String(e.maxTeamMembers ?? "") : "individual";
+
 const eventRows = events.map((e, i) => {
   const about = e.about ?? [];
   return `    (${lit(e.id)}, ${lit(e.number)}, ${prose(e.title)}, ${lit(e.category)}, ${
@@ -77,7 +92,7 @@ const eventRows = events.map((e, i) => {
   }, ${lit(e.realm)}, ${prose(e.tagline ?? "")},
      array[${about.map(prose).join(", ")}]::text[],
      ${prose(e.date ?? "")}, ${prose(e.venue ?? "")}, ${prose(e.teamSize ?? "")},
-     ${lit(e.maxSize)}, ${prose(e.status ?? "")}, ${lit(e.accent)}, ${lit(e.sigil)}, ${lit(
+     ${lit(legacyMaxSize(e))}, ${prose(e.status ?? "")}, ${lit(e.accent)}, ${lit(e.sigil)}, ${lit(
     e.linkKey
   )}, ${i})`;
 });

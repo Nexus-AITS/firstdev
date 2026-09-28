@@ -7,7 +7,7 @@ import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import EventLogo from "../components/event/EventLogo.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
 import NotFound from "./NotFound.jsx";
-import { formatEventFee, getEventById, getEventFee, formatMaxSize } from "../data/events.js";
+import { formatEventFee, getEventById, getEventFee, formatEntryType } from "../data/events.js";
 import { realms } from "../data/realms.js";
 import usePricing from "../hooks/usePricing.js";
 
@@ -144,7 +144,7 @@ export default function EventDetail() {
                   {formatEventFee(event.id)}
                 </p>
                 <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/55">
-                  {formatMaxSize(event.maxSize)}
+                  {formatEntryType(event)}
                 </span>
                 <span aria-hidden className="h-px w-8 bg-gold/40" />
               </div>

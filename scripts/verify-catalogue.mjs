@@ -2,7 +2,7 @@
  * Prove the catalogue layer: seed integrity, bundle rules, CRUD authorization,
  * and the XLSX writer.
  *
- * Four claims are defended here, and three of them are security claims rather
+ * Five claims are defended here, three of them security claims rather
  * than behaviour:
  *
  *   1. The catalogue writes are MASTER-ONLY. staff_upsert_event /
@@ -27,6 +27,14 @@
  *      signature, the stored-entry names, and the XML escaping of a value
  *      containing &, < and ' — the three characters that corrupt a sheet
  *      silently rather than loudly.
+ *
+ *   5. The ENTRY RULE is the database's. Every event states whether it is
+ *      individual or team, a team must say how many may enter, and an
+ *      individual must carry no cap — in the data AND on the write path. The
+ *      refusals are asserted for a readable sentence rather than ok:false,
+ *      because the console prints that string to the operator. A client that
+ *      predates the field is proved to still work, so deploying the schema does
+ *      not break a console tab that is already open.
  *
  * Every row this creates is removed in a finally block.
  *
@@ -212,6 +220,48 @@ out(
   `${keys[0].d} distinct of ${keys[0].n}`
 );
 
+/* ---------- 1b. every event states who may enter it ---------- */
+
+// The entry rule has two halves and both are checked here rather than one: a
+// team with no cap cannot answer "how many may enter?", and an individual
+// carrying a cap is advertising a limit that does not exist. The constraint
+// makes both unstorable, so this asserts the DATA agrees — which is the part a
+// constraint cannot tell you, because it only ever saw the last write.
+const entry = await sql(`
+  select ec.id, ec.entry_type, ec.max_team_members, ec.team_size
+    from public.event_catalogue ec
+   where ec.is_active
+     and ( ec.entry_type not in ('individual', 'team')
+        or (ec.entry_type = 'team'  and ec.max_team_members is null)
+        or (ec.entry_type = 'team'  and (ec.max_team_members < 1 or ec.max_team_members > 50))
+        or (ec.entry_type = 'individual' and ec.max_team_members is not null) )`);
+out(
+  entry.length === 0,
+  "every active event is a team with a cap, or an individual with none",
+  entry.length
+    ? entry.map((r) => `${r.id} (${r.entry_type}/${r.max_team_members}, "${r.team_size}")`).join("; ")
+    : "11 of 11 well formed"
+);
+
+// The cap and the free-text line an operator reads on the card have to agree.
+// They are two different columns, so a console edit to one can leave the other
+// lying — and the card prints team_size while the rule is enforced on the cap.
+const split = await sql(`
+  select ec.id, ec.team_size, ec.max_team_members
+    from public.event_catalogue ec
+   where ec.is_active
+     and ec.team_size ~ '[0-9]'
+     and ec.team_size !~* 'solo'
+     and substring(reverse(ec.team_size) from '[^0-9]*([0-9]+)')::int
+           is distinct from ec.max_team_members`);
+out(
+  split.length === 0,
+  "each team's cap matches the number in its printed team size",
+  split.length
+    ? split.map((r) => `${r.id}: says "${r.team_size}", cap is ${r.max_team_members}`).join("; ")
+    : "no disagreement"
+);
+
 /* ---------- 2. the pricing MODEL: bundles must undercut their parts ------ */
 
 // The product strategy is that a bundle is cheaper than assembling the same
@@ -362,6 +412,145 @@ try {
     badIdBody?.ok === false && typeof badIdBody?.error === "string",
     "an invalid id returns a readable message",
     badIdBody?.error ?? ""
+  );
+
+  /* ---- the entry rule: individual or team, and a cap only for a team ---- */
+  //
+  // The refusals matter as much as the accept, and they are checked for a
+  // SENTENCE rather than just ok:false, because the console prints this string
+  // and a raw constraint name tells an operator nothing. A cap-less team is the
+  // whole point — it is the state where "how many may enter?" has no answer.
+
+  const noCap = await rpc(
+    "staff_upsert_event",
+    { p_event: { id: `${PROBE}-nocap`, title: "X", realm: "forge", entry_type: "team" } },
+    token
+  );
+  const noCapBody = await noCap.json();
+  out(
+    noCapBody?.ok === false && typeof noCapBody?.error === "string",
+    "a team event with no maximum team size is refused, with a message",
+    noCapBody?.error ?? ""
+  );
+
+  const badEntry = await rpc(
+    "staff_upsert_event",
+    { p_event: { id: `${PROBE}-entry`, title: "X", realm: "forge", entry_type: "duo" } },
+    token
+  );
+  const badEntryBody = await badEntry.json();
+  out(
+    badEntryBody?.ok === false && typeof badEntryBody?.error === "string",
+    "an entry type that is neither individual nor team is refused",
+    badEntryBody?.error ?? ""
+  );
+
+  const hugeCap = await rpc(
+    "staff_upsert_event",
+    {
+      p_event: {
+        id: `${PROBE}-huge`,
+        title: "X",
+        realm: "forge",
+        entry_type: "team",
+        max_team_members: 900,
+      },
+    },
+    token
+  );
+  const hugeCapBody = await hugeCap.json();
+  out(
+    hugeCapBody?.ok === false && typeof hugeCapBody?.error === "string",
+    "a cap outside 1-50 is refused rather than silently clamped",
+    hugeCapBody?.error ?? ""
+  );
+
+  // A team WITH a cap, and the row is really that afterwards. Without the read
+  // back, an RPC that accepted everything and stored nothing would pass the
+  // refusals above for entirely the wrong reason.
+  const teamWrite = await rpc(
+    "staff_upsert_event",
+    {
+      p_event: {
+        id: `${PROBE}-team`,
+        number: "ZZ",
+        title: "Probe Team",
+        realm: "forge",
+        entry_type: "team",
+        max_team_members: 4,
+        is_active: true,
+      },
+    },
+    token
+  );
+  const teamBody = await teamWrite.json();
+  out(teamBody?.ok === true, "a team event with a cap is accepted", JSON.stringify(teamBody));
+
+  const teamRow = await sql(
+    `select entry_type, max_team_members, max_size from public.event_catalogue where id = '${PROBE}-team'`
+  );
+  out(
+    teamRow[0]?.entry_type === "team" && Number(teamRow[0]?.max_team_members) === 4,
+    "the entry type and the cap are stored as given",
+    JSON.stringify(teamRow[0])
+  );
+  // The legacy column is a mirror, not a second source of truth: a client must
+  // not be able to write a max_size that disagrees with the pair above it.
+  out(
+    teamRow[0]?.max_size === "4",
+    "the legacy max_size mirror follows the cap",
+    `max_size=${teamRow[0]?.max_size}`
+  );
+
+  // An individual event that arrives with a stray cap. Normalised, not refused:
+  // the console hides the field for a solo entry, so a leftover value there is
+  // a UI accident, and the storage invariant is what has to hold either way.
+  const soloWrite = await rpc(
+    "staff_upsert_event",
+    {
+      p_event: {
+        id: `${PROBE}-solo`,
+        number: "ZZ",
+        title: "Probe Solo",
+        realm: "forge",
+        entry_type: "individual",
+        max_team_members: 9,
+        is_active: true,
+      },
+    },
+    token
+  );
+  const soloBody = await soloWrite.json();
+  out(soloBody?.ok === true, "an individual event is accepted", JSON.stringify(soloBody));
+
+  const soloRow = await sql(
+    `select entry_type, max_team_members from public.event_catalogue where id = '${PROBE}-solo'`
+  );
+  out(
+    soloRow[0]?.entry_type === "individual" && soloRow[0]?.max_team_members == null,
+    "an individual event stores no cap, whatever the client sent",
+    JSON.stringify(soloRow[0])
+  );
+
+  // A console tab that predates the field still works. It sends the old packed
+  // max_size and no entry_type, and has to land as the pair the migration's
+  // backfill would have derived — otherwise deploying the schema would break the
+  // one client that is already open.
+  const legacyWrite = await rpc(
+    "staff_upsert_event",
+    { p_event: { id: `${PROBE}-legacy`, title: "X", realm: "forge", max_size: "3" } },
+    token
+  );
+  const legacyBody = await legacyWrite.json();
+  const legacyRow = await sql(
+    `select entry_type, max_team_members from public.event_catalogue where id = '${PROBE}-legacy'`
+  );
+  out(
+    legacyBody?.ok === true &&
+      legacyRow[0]?.entry_type === "team" &&
+      Number(legacyRow[0]?.max_team_members) === 3,
+    "a client sending only the old max_size still lands as a team with that cap",
+    JSON.stringify(legacyRow[0])
   );
 
   // A bundle naming an event that does not exist must be refused, and refused

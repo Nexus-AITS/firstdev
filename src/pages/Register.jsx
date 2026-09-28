@@ -8,7 +8,7 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById, getEventFee, getEventFields } from "../data/events.js";
+import { getEventById, getEventFee, getEventFields, getEntryType } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
 import usePricing from "../hooks/usePricing.js";
 import {
@@ -620,8 +620,12 @@ export default function Register() {
                   ? "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
                   : "Submit your details — this entry is free, no payment needed. The admin confirms and your seat is locked."
                 : "Pick an event in the realms to register with its fee, or fill your details below to join the roster."}
-              {event?.teamSize
-                ? ` Team event (${event.teamSize}) — each member registers separately.`
+              {/* Driven by entryType, not by the free-text teamSize: the hint
+                  makes a PROMISE about how many people may enter, and that has
+                  to come from the field the database enforces. An individual
+                  event says nothing here rather than repeating "SOLO". */}
+              {getEntryType(event) === "team"
+                ? ` Team event — up to ${event.maxTeamMembers} members per team, and each member registers separately.`
                 : ""}
             </p>
           </Reveal>

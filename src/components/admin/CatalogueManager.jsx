@@ -15,6 +15,7 @@
  * code is not, and the wrapper functions already translate the common cases.
  */
 import { useCallback, useEffect, useState } from "react";
+import { ENTRY_TYPES } from "../../data/events.js";
 import {
   loadPublicCatalogue,
   staffRetireBundle,
@@ -45,6 +46,8 @@ const emptyEvent = {
   event_date: "",
   venue: "",
   team_size: "",
+  entry_type: "individual",
+  max_team_members: "",
   status: "REGISTRATION OPEN",
   is_active: true,
 };
@@ -61,9 +64,28 @@ function toEventForm(row) {
     event_date: row.event_date ?? "",
     venue: row.venue ?? "",
     team_size: row.team_size ?? "",
+    // Anything that is not exactly "team" reads as individual, which is what the
+    // database CHECK guarantees anyway. Normalising on read means the select can
+    // never be handed a value it has no option for.
+    entry_type: row.entry_type === "team" ? "team" : "individual",
+    max_team_members: row.max_team_members ?? "",
     status: row.status ?? "REGISTRATION OPEN",
     is_active: row.is_active !== false,
   };
+}
+
+/**
+ * How an event's entry rule reads in the list.
+ *
+ * The same words formatEntryType() puts on the public card, so an operator
+ * checking the cap here and a participant reading the event page are looking at
+ * one sentence rather than two that can drift.
+ */
+function entryLabel(row) {
+  if (row.entry_type !== "team") return "INDIVIDUAL";
+  return row.max_team_members == null
+    ? "TEAM · NO CAP"
+    : `TEAM · MAX ${row.max_team_members}`;
 }
 
 function toBundleForm(row) {
@@ -96,6 +118,16 @@ function EventEditor({ events, token, onSaved, onError }) {
   const set = (k) => (e) =>
     setForm((f) => ({ ...f, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
 
+  // Flipping to Individual clears the cap rather than leaving a number behind a
+  // field that is no longer on screen — it would otherwise go back to the server
+  // as a value the operator cannot see and did not intend.
+  const setEntryType = (e) =>
+    setForm((f) => ({
+      ...f,
+      entry_type: e.target.value,
+      max_team_members: e.target.value === "team" ? f.max_team_members : "",
+    }));
+
   function edit(row) {
     setForm(toEventForm(row));
   }
@@ -119,6 +151,14 @@ function EventEditor({ events, token, onSaved, onError }) {
         event_date: form.event_date.trim(),
         venue: form.venue.trim(),
         team_size: form.team_size.trim(),
+        entry_type: form.entry_type,
+        // A number or null, never "". A solo event sends null so the RPC's
+        // "no cap given" branch is what runs, which is also what keeps the
+        // database's CHECK true whatever a client does.
+        max_team_members:
+          form.entry_type === "team" && form.max_team_members !== ""
+            ? Number(form.max_team_members)
+            : null,
         status: form.status.trim(),
         is_active: form.is_active,
       },
@@ -167,7 +207,7 @@ function EventEditor({ events, token, onSaved, onError }) {
               >
                 <span className="block text-sm text-bone">{e.title}</span>
                 <span className="block font-mono text-[11px] text-ash">
-                  {e.id} · {e.realm}
+                  {e.id} · {e.realm} · {entryLabel(e)}
                   {e.is_active ? "" : " · RETIRED"}
                 </span>
               </button>
@@ -221,6 +261,44 @@ function EventEditor({ events, token, onSaved, onError }) {
         <div>
           <label className={labelClass} htmlFor="cat-event-category">Category</label>
           <input id="cat-event-category" className={`mt-1 ${inputClass}`} value={form.category} onChange={set("category")} placeholder="IDEATHON" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="cat-event-entry">Entry type</label>
+            <select
+              id="cat-event-entry"
+              data-action="cat-event-entry"
+              className={`mt-1 ${inputClass}`}
+              value={form.entry_type}
+              onChange={setEntryType}
+            >
+              {ENTRY_TYPES.map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          {/* Shown only for a team, because that is the only case the cap means
+              anything in. `required` rather than a JS check: the browser refuses
+              an empty submit, and the RPC refuses it again with a sentence if
+              anything ever posts here directly. */}
+          {form.entry_type === "team" ? (
+            <div>
+              <label className={labelClass} htmlFor="cat-event-cap">Max team members</label>
+              <input
+                id="cat-event-cap"
+                data-action="cat-event-cap"
+                type="number"
+                min="1"
+                max="50"
+                step="1"
+                required
+                className={`mt-1 ${inputClass}`}
+                value={form.max_team_members}
+                onChange={set("max_team_members")}
+                placeholder="5"
+              />
+            </div>
+          ) : null}
         </div>
         <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ash">
           <input type="checkbox" checked={form.is_active} onChange={set("is_active")} />

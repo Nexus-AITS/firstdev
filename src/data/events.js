@@ -6,7 +6,12 @@
  * payment = entry fee in ₹ — 0 means an explicitly FREE entry. Never omit the
  * field: consumers guard on `event.payment != null`, so a missing value reads
  * as "fee unknown" and hides the price line instead of saying FREE.
- * maxSize = team cap ("individual" = solo entry).
+ * entryType = "individual" or "team": who may enter this event. maxTeamMembers
+ * is the cap and is REQUIRED when entryType is "team" and absent when it is
+ * "individual" — the same rule the database enforces, so a value that is not
+ * the authority is still never wrong.
+ * teamSize is the free-text line the site prints ("2 — 5 MEMBERS"). It is
+ * editorial copy; nothing reads it as a rule.
  *
  * The `payment` below is a FALLBACK. The live entry fee comes from
  * public.pricing at runtime (see pricing.js / getEventFee), so changing a fee is
@@ -31,7 +36,8 @@ export const events = [
     venue: "E-BLOCK · LABS A–E · SEMINAR HALL",
     teamSize: "2 — 5 MEMBERS",
     payment: 349,
-    maxSize: 5,
+    entryType: "team",
+    maxTeamMembers: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "fracture",
@@ -52,7 +58,8 @@ export const events = [
     venue: "CLASS ROOMS",
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
-    maxSize: 5,
+    entryType: "team",
+    maxTeamMembers: 5,
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "temporal",
@@ -73,7 +80,8 @@ export const events = [
     venue: "MAIN BLOCK — GROUND FLOOR",
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
-    maxSize: 5,
+    entryType: "team",
+    maxTeamMembers: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "circuit",
@@ -94,7 +102,8 @@ export const events = [
     venue: "MAIN BLOCK — 2 CLASSROOMS",
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
-    maxSize: 5,
+    entryType: "team",
+    maxTeamMembers: 5,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "neural",
@@ -115,7 +124,8 @@ export const events = [
     venue: "LABS D & E",
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
-    maxSize: 5,
+    entryType: "team",
+    maxTeamMembers: 5,
     status: "REGISTRATION OPEN",
     accent: "lavender",
     sigil: "rebuild",
@@ -137,7 +147,8 @@ export const events = [
     venue: "COLLEGE PREMISES",
     teamSize: "2 — 4 MEMBERS",
     payment: 249,
-    maxSize: 4,
+    entryType: "team",
+    maxTeamMembers: 4,
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "mystery",
@@ -158,7 +169,7 @@ export const events = [
     venue: "E-BLOCK CLASSROOM",
     teamSize: "SOLO",
     payment: 149,
-    maxSize: "individual",
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "timeline",
@@ -179,7 +190,7 @@ export const events = [
     venue: "NEXUS OFF-GRID — CITY SECTORS",
     teamSize: "SOLO",
     payment: 149,
-    maxSize: "individual",
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "lavender",
     sigil: "lens",
@@ -200,7 +211,7 @@ export const events = [
     venue: "NEXUS OFF-GRID — GLITCH DECK",
     teamSize: "SOLO",
     payment: 149,
-    maxSize: "individual",
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "matrix",
@@ -221,7 +232,7 @@ export const events = [
     venue: "MAIN BLOCK — 2 CLASSROOMS",
     teamSize: "SOLO",
     payment: 149,
-    maxSize: "individual",
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "pixel",
@@ -245,7 +256,8 @@ export const events = [
     venue: "THE ARENA — MAIN STAGE",
     teamSize: "SQUAD OF 4",
     payment: 149,
-    maxSize: 4,
+    entryType: "team",
+    maxTeamMembers: 4,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "squad",
@@ -300,11 +312,39 @@ export function getEventLogo(id) {
   return getEventById(id)?.logo ?? null;
 }
 
-/** Human label for a max team size — "5" -> "MAX SIZE 5". */
-export function formatMaxSize(maxSize) {
-  if (maxSize === "individual") return "INDIVIDUAL";
-  if (typeof maxSize === "number") return `MAX SIZE ${maxSize}`;
-  return "";
+/** The two entry types, for a select and for a value check. */
+export const ENTRY_TYPES = [
+  { id: "individual", label: "Individual" },
+  { id: "team", label: "Team" },
+];
+
+/**
+ * An event's entry type, defaulted to "individual".
+ *
+ * Always one of the two ids, so a caller can compare against a literal without
+ * a null check. An event that declares no entryType is one nobody has stated a
+ * cap for, and reading it as individual is the safe direction: it is the only
+ * reading that does not promise a team seat that may not exist.
+ */
+export function getEntryType(event) {
+  return event?.entryType === "team" ? "team" : "individual";
+}
+
+/**
+ * Human label for an event's entry rule — the one place that decides what it
+ * renders as, so the two can never disagree between the card and the page:
+ *
+ *   individual  -> "INDIVIDUAL"
+ *   team, cap 5 -> "TEAM · MAX 5"
+ *
+ * A team event with no usable cap renders as "", never as a cap it does not
+ * have. formatFee below makes the same call about a missing fee, and for the
+ * same reason: a data gap must not masquerade as a real value.
+ */
+export function formatEntryType(event) {
+  if (getEntryType(event) === "individual") return "INDIVIDUAL";
+  const cap = Number(event?.maxTeamMembers);
+  return Number.isInteger(cap) && cap > 0 ? `TEAM · MAX ${cap}` : "";
 }
 
 /**

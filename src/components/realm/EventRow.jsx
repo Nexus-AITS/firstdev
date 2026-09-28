@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatEventFee, formatMaxSize, getEventFee } from "../../data/events.js";
+import { formatEventFee, formatEntryType, getEventFee } from "../../data/events.js";
 import usePricing from "../../hooks/usePricing.js";
 
 function ExploreLink({ id }) {
@@ -70,7 +70,7 @@ export default function EventRow({ event, index = 0 }) {
           {/* `!= null`, not truthy: a fee of 0 is a FREE entry, not "unknown". */}
           {fee != null ? (
             <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
-              {formatEventFee(event.id)} · {formatMaxSize(event.maxSize)}
+              {formatEventFee(event.id)} · {formatEntryType(event)}
             </p>
           ) : null}
 
