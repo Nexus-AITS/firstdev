@@ -14,6 +14,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import {
+  can as roleCan,
+  staffDeleteContact,
   staffListContacts,
   staffRetireContact,
   staffUpsertContact,
