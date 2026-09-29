@@ -109,6 +109,7 @@ function Row({ row, onEdit, onRetire, onRemove, canDelete }) {
               data-action="retire-contact"
             >
               Retire
+            </button>
           ) : null}
           {/* Master only, and only on a channel already off the public page.
               Retire hides it; delete erases it for good. */}
@@ -120,8 +121,6 @@ function Row({ row, onEdit, onRetire, onRemove, canDelete }) {
               data-action="delete-contact"
             >
               Delete
-            </button>
-          ) : null}
             </button>
           ) : null}
         </div>

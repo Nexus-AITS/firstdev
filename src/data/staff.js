@@ -70,10 +70,40 @@ export const can = (role, action) => Boolean(ROLE_META[role]?.can.includes(actio
 
 /* ---------- token storage ---------- */
 
+/* localStorage, not sessionStorage, because the requirement is "the same staff
+ * account, on the same device, inside the TTL, should not have to authenticate
+ * again". sessionStorage is per-TAB: once staffResume stopped throwing the token
+ * away it would survive a reload, but not a second tab and not closing the
+ * browser - so two tabs of the console meant two sign-ins and two session rows.
+ * localStorage is scoped to the browser profile, which is what "same device"
+ * means in practice.
+ *
+ * The trade-off, stated plainly: a shared kiosk is now shared, and whoever signs
+ * in last holds the session on that machine until it expires. The 60-minute TTL
+ * is the whole of that exposure, and staff_logout still clears it. If the console
+ * is ever run on a machine people walk up to, this is the line to revisit -
+ * sessionStorage is one word away, and the resume fix below stands either way.
+ *
+ * A still-live session is MIGRATED out of the per-tab store on first read, so the
+ * upgrade does not sign anybody out. */
+
 function readStored() {
   try {
-    const token = sessionStorage.getItem(TOKEN_KEY);
-    const expiresAt = Number(sessionStorage.getItem(EXPIRY_KEY) || 0);
+    let token = localStorage.getItem(TOKEN_KEY);
+    const expiresAt = Number(localStorage.getItem(EXPIRY_KEY) || 0);
+
+    if (!token) {
+      // One-time move from the per-tab store.
+      const legacy = sessionStorage.getItem(TOKEN_KEY);
+      if (legacy && expiresAt > Date.now()) {
+        token = legacy;
+        localStorage.setItem(TOKEN_KEY, token);
+        localStorage.setItem(EXPIRY_KEY, String(expiresAt));
+      }
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(EXPIRY_KEY);
+    }
+
     return token ? { token, expiresAt } : null;
   } catch {
     // Private mode / storage disabled — the session simply will not persist
@@ -84,8 +114,8 @@ function readStored() {
 
 function writeStored(token, expiresAt) {
   try {
-    sessionStorage.setItem(TOKEN_KEY, token);
-    sessionStorage.setItem(EXPIRY_KEY, String(expiresAt));
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(EXPIRY_KEY, String(expiresAt));
   } catch {
     /* non-fatal: the session lives in memory for this page load */
   }
@@ -93,6 +123,8 @@ function writeStored(token, expiresAt) {
 
 function clearStored() {
   try {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EXPIRY_KEY);
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(EXPIRY_KEY);
   } catch {
@@ -235,20 +267,39 @@ export async function staffLogout() {
 /**
  * Re-resolve the stored token against the database.
  *
- * Called on mount so a page reload does not blindly trust sessionStorage: the
+ * Called on mount so a page reload does not blindly trust what is stored: the
  * token might have expired, been revoked, or belong to a since-deactivated
- * account. The database is asked, not assumed.
+ * account. The database is asked, not assumed - and it is this call that decides
+ * whether a reload keeps you signed in.
+ *
+ * THE BUG
+ *
+ * `staff_session` returns ONE row, as a jsonb OBJECT. It was read here as
+ * `Array.isArray(res.body) ? res.body : []`, which is false for an object, so
+ * `rows` was ALWAYS empty - and an empty result means "this token is not good,
+ * clear it". So every single page load threw the stored token away and signed the
+ * operator out, who then re-entered their credentials, and every sign-in mints a
+ * NEW row in staff_sessions. One master had 290 of them.
+ *
+ * It is worth being precise about how quietly this failed: the shape was checked
+ * for emptiness rather than for content, so a perfectly healthy session was
+ * indistinguishable from a dead one. The RPC compounds it by returning 200 with
+ * a row of NULLS when the header is missing, rather than an error - a deliberate
+ * choice, since "who am I" has no failure case, but it means an empty check can
+ * never tell the two apart. The test is on `username`, which is null in that
+ * row and never null in a real one.
  */
 export async function staffResume() {
   if (!current?.token) return { ok: false, session: null };
   const res = await rpc("staff_session", {});
-  const rows = Array.isArray(res.body) ? res.body : [];
-  if (!rows.length) {
+  // A single object, or a one-element array if the shape ever changes. Both are
+  // accepted so a future edit to the RPC cannot silently log everyone out again.
+  const row = Array.isArray(res.body) ? res.body[0] : res.body;
+  if (!row?.username) {
     clearStored();
     publish(null);
     return { ok: false, session: null };
   }
-  const row = rows[0];
   const session = {
     token: current.token,
     username: row.username,
