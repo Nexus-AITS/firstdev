@@ -1,10 +1,10 @@
 ﻿/**
- * Contacts tab — what the public /contact page renders, in the console.
+ * Contacts tab â€” what the public /contact page renders, in the console.
  *
  * Same contract as the catalogue tab: the screen is an editor over the
  * database, not a list of addresses compiled into the bundle. Adding a channel
  * here makes it appear on the public page immediately, with no redeploy and
- * nothing for a developer to do — which is the entire point, because the
+ * nothing for a developer to do â€” which is the entire point, because the
  * previous arrangement (an address in a React component) is why it was wrong
  * every time somebody changed it.
  *
@@ -68,20 +68,20 @@ const VALUE_HINT = {
 
 /** The line under the value box. Says what will happen to what they type. */
 function valueHelp(kind) {
-  if (kind === "phone") return "Dialable as written — the page strips spaces and dashes for the tel: link.";
+  if (kind === "phone") return "Dialable as written â€” the page strips spaces and dashes for the tel: link.";
   if (kind === "email") return "The database refuses an address with no @ in it.";
   if (kind === "website") return "Type as you would read it out; the page adds https:// if you leave it off.";
   return "An address with nothing to dial or mail, so the page shows it as plain text.";
 }
 
-function Row({ row, onEdit, onRetire }) {
+function Row({ row, onEdit, onRetire, onRemove, canDelete }) {
   return (
     <li className={`border p-4 ${row.is_active ? "border-line" : "border-line/50 opacity-60"}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-lavender/70">
             {KINDS.find((k) => k.value === row.kind)?.label ?? row.kind}
-            {row.is_active ? "" : " · retired"}
+            {row.is_active ? "" : " Â· retired"}
           </p>
           <p className="mt-2 font-display text-base tracking-[0.1em] text-crystal">{row.label}</p>
           <p className="mt-1 break-words font-mono text-sm text-violet-bright">{row.value}</p>
@@ -107,6 +107,19 @@ function Row({ row, onEdit, onRetire }) {
               data-action="retire-contact"
             >
               Retire
+          ) : null}
+          {/* Master only, and only on a channel already off the public page.
+              Retire hides it; delete erases it for good. */}
+          {canDelete ? (
+            <button
+              type="button"
+              onClick={() => onRemove(row)}
+              className="border border-red-400/40 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-red-300/80 transition hover:border-red-400 hover:text-red-200"
+              data-action="delete-contact"
+            >
+              Delete
+            </button>
+          ) : null}
             </button>
           ) : null}
         </div>
@@ -205,10 +218,40 @@ export default function ContactManager({ session }) {
     reload();
   }
 
+  /**
+   * Permanently remove a channel. Master only.
+   *
+   * The header of this file says "Retire, never delete", and that is still the
+   * rule for ordinary use - a number a participant has already written down does
+   * not stop existing because we hide it. Delete is here for the one case retire
+   * cannot fix: a channel that was a mistake and was never the truth, so there is
+   * nothing anyone could have written down. That is a master's call, and the
+   * database checks the role itself rather than trusting this screen.
+   */
+  async function remove(row) {
+    setError(null);
+    setOk(null);
+    if (
+      !window.confirm(
+        `Permanently delete "${row.label}"?\n\nThis cannot be undone. Retire it instead if you only want it off the public contact page.`
+      )
+    ) {
+      return;
+    }
+    const result = await staffDeleteContact(row.id, session.token);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setOk(`"${row.label}" was deleted permanently.`);
+    setForm((prev) => (prev.id === row.id ? emptyForm : prev));
+    reload();
+  }
+
   return (
     <section data-action="contact-manager">
       <p className="mb-5 font-mono text-[11px] uppercase tracking-[0.2em] text-ash">
-        Signed in as {session.username} · {session.role}
+        Signed in as {session.username} Â· {session.role}
       </p>
 
       {error ? (
@@ -230,7 +273,7 @@ export default function ContactManager({ session }) {
           <h2 className="font-display text-lg tracking-[0.2em] text-crystal">PUBLISHED CHANNELS</h2>
           {loaded && rows.length === 0 ? (
             <p className="mt-4 border border-line px-4 py-5 text-sm leading-relaxed text-crystal/60">
-              Nothing here yet, and the public contact page says exactly that — it shows &ldquo;
+              Nothing here yet, and the public contact page says exactly that â€” it shows &ldquo;
               nothing published yet&rdquo; rather than an empty box that reads as a broken page.
               Add the first channel with the form beside this list.
             </p>
@@ -238,7 +281,7 @@ export default function ContactManager({ session }) {
 
           <ul className="mt-4 flex flex-col gap-3" data-action="contact-rows">
             {rows.map((row) => (
-              <Row key={row.id} row={row} onEdit={startEdit} onRetire={retire} />
+              <Row key={row.id} row={row} onEdit={startEdit} onRetire={retire} onRemove={remove} canDelete={roleCan(session.role, "delete_catalogue")} />
             ))}
           </ul>
         </div>
@@ -332,7 +375,7 @@ export default function ContactManager({ session }) {
 
           <div className="flex flex-wrap gap-2">
             <button type="submit" disabled={busy} className={buttonClass} data-action="save-contact">
-              {busy ? "Saving…" : form.id ? "Save changes" : "Publish channel"}
+              {busy ? "Savingâ€¦" : form.id ? "Save changes" : "Publish channel"}
             </button>
             {form.id ? (
               <button type="button" onClick={startNew} className={buttonClass}>

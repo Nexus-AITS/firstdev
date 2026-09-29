@@ -35,6 +35,7 @@
     "verify:staff": "node scripts/verify-staff.mjs",
     "verify:staff-ui": "node scripts/verify-staff-ui.mjs",
     "verify:bundle-ui": "node scripts/verify-bundle-create-ui.mjs",
+    "verify:delete-ui": "node scripts/verify-delete-ui.mjs",
     "verify:pricing": "node scripts/verify-pricing.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",

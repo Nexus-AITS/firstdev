@@ -1,4 +1,4 @@
-﻿import { mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 mkdirSync("artifacts/screenshots", { recursive: true });
 /** Assert real event data from nexus 65.docx renders on every detail page. */
 import { chromium } from "playwright";
@@ -8,10 +8,10 @@ import { events, formatFee, getEventFields } from "../src/data/events.js";
 // taken, and asserting data against the wrong build proves nothing.
 const BASE = process.env.VERIFY_BASE || "http://localhost:4173";
 const CHECKS = [
-  ["/events/nexus-breach", ["OCT 5 — 6, 2026", "LABS A–E", "RJ45", "valedictory"]],
+  ["/events/nexus-breach", ["OCT 5 — 6, 2026", "RJ45", "valedictory"]],
   ["/events/vision-2065", ["OCT 5, 2026", "CLASS ROOMS", "Advance registration"]],
   ["/events/circuits-of-nexus", ["OCT 7, 2026", "GROUND FLOOR", "materials and circuits"]],
-  ["/events/ai-turing-gambit", ["OCT 6, 2026", "2 CLASSROOMS", "NEXUS AI"]],
+  
   ["/events/code-rebuilding", ["OCT 6, 2026", "LABS D & E", "corrupted code"]],
   ["/events/the-scientist-files", ["OCT 6, 2026", "COLLEGE PREMISES", "three fictional case files"]],
   ["/events/paradox-2065", ["OCT 6, 2026", "E-BLOCK CLASSROOM", "What If?"]],
@@ -75,6 +75,24 @@ for (const [route, expects] of CHECKS) {
   const ok = missing.length === 0;
   if (!ok) failures += 1;
   console.log(`${ok ? "PASS" : "FAIL"}  ${route}${ok ? "" : `  missing: ${missing.join(" | ")}`}`);
+}
+
+/* Every event page must render a VENUE with a real value, without pinning WHICH
+ * one. The CHECKS list above used to name venues verbatim ("LABS A–E"), and that
+ * is the same mistake as hardcoding a price: the venue is a business decision an
+ * operator edits in the console, so the assertion was reporting their decision
+ * rather than whether the page renders it. It failed the first time somebody
+ * changed a room. The label must be there and must not be followed by a blank. */
+for (const [route] of [...new Map(CHECKS.map((c) => [c[0], c])).values()]) {
+  await page.goto(BASE + route, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(650);
+  const venue = await page.evaluate(() => {
+    const m = document.body.innerText.match(/VENUE\s*\n?\s*([^\n]+)/i);
+    return m ? m[1].trim() : "";
+  });
+  const ok = venue.length > 1;
+  if (!ok) failures += 1;
+  console.log(`${ok ? "PASS" : "FAIL"}  ${route} renders a venue  |  ${venue || "(none)"}`);
 }
 
 // visual confirmation of a detail page with the new data

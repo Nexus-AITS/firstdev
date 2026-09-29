@@ -36,9 +36,15 @@ export const ROLE_META = {
       "view_audit",
       "manage_catalogue",
       "manage_contacts",
+      // PERMANENT removal. Its own capability rather than a reuse of "remove",
+      // which is the roster's soft delete: keeping them apart means a master can
+      // be given the one without the other, and the UI can say "delete" only
+      // where the database's staff_at_least('master') check will agree. The two
+      // must be changed together - if you widen this, widen the RPC too.
+      "delete_catalogue",
     ],
     blurb:
-      "Full control: verify or reject payments, remove registrations, manage staff, set prices, and edit the event and bundle catalogue.",
+      "Full control: verify or reject payments, remove registrations, manage staff, set prices, edit the event and bundle catalogue, and permanently delete an event, bundle or contact that was never real.",
   },
   admin: {
     label: "Administrator",
@@ -46,9 +52,11 @@ export const ROLE_META = {
     // reads when something has gone wrong, and the team that verifies payments
     // is the team that answers the phone. Matches the RPC's own
     // staff_at_least('admin') gate — if you want masters only, change both.
+    // No "delete_catalogue": an admin may publish a channel and retire it, but
+    // erasing one is a master's decision.
     can: ["read", "verify", "reject", "view_audit", "manage_contacts"],
     blurb:
-      "Accept or reject participants, review the audit log, and publish the contact details on the public contact page. Cannot remove registrations, manage staff, or change prices.",
+      "Accept or reject participants, review the audit log, and publish the contact details on the public contact page. Cannot remove registrations, manage staff, change prices, or delete anything.",
   },
   coordinator: {
     label: "Coordinator",
@@ -559,6 +567,29 @@ export async function staffRetireBundle(id, token) {
   return rpc("staff_retire_bundle", { p_bundle_id: id }, token);
 }
 
+/**
+ * Permanently remove an event. MASTER ONLY, and irreversible.
+ *
+ * Deliberately a different call from staffRetireEvent: retiring is a flag and
+ * keeps the row, while this erases it along with its price. The database refuses
+ * when anyone has registered for the event, or when a live bundle seats it, and
+ * says why - so the guard is enforced where it cannot be bypassed, and the
+ * button in the console is only a convenience on top of it.
+ */
+export async function staffDeleteEvent(id, token) {
+  return rpc("staff_delete_event", { p_event_id: id }, token);
+}
+
+/** Permanently remove a bundle, its price and its include lines. MASTER ONLY. */
+export async function staffDeleteBundle(id, token) {
+  return rpc("staff_delete_bundle", { p_bundle_id: id }, token);
+}
+
+/** Permanently remove a contact channel. MASTER ONLY. */
+export async function staffDeleteContact(id, token) {
+  return rpc("staff_delete_contact", { p_contact_id: id }, token);
+}
+
 /** Take an event off the public site. Refused while a live bundle seats it. */
 export async function staffRetireEvent(id, token) {
   return rpc("staff_retire_event", { p_event_id: id }, token);
@@ -650,6 +681,23 @@ export async function loadPublicCatalogue() {
   const res = await rpc("public_catalogue", {}, null);
   if (!res.ok || !res.body) return { ok: false, error: "The catalogue is unavailable." };
   return { ok: true, events: res.body.events ?? [], bundles: res.body.bundles ?? [] };
+}
+
+/**
+ * The whole catalogue, INCLUDING retired rows. Master only.
+ *
+ * The console cannot use loadPublicCatalogue for its own list, because that one
+ * filters to `is_active` - correctly, it feeds the public site. The consequence
+ * was that a retired event or bundle was invisible in the one screen meant for
+ * editing the catalogue: it could not be seen, restored, or deleted, and the
+ * only record that it existed was the audit log. `public_catalogue` must stay
+ * strict for the public; this is the staff read.
+ */
+export async function staffListCatalogue(token) {
+  const res = await rpc("staff_list_catalogue", {}, token);
+  if (!res.ok) return { ok: false, error: "The catalogue is unavailable." };
+  if (res.body?.ok === false) return { ok: false, error: res.body.error };
+  return { ok: true, events: res.body?.events ?? [], bundles: res.body?.bundles ?? [] };
 }
 
 /** Ask the database which selections a bundle would accept. Used by tests. */

@@ -11,6 +11,10 @@ const LINKS = [
   { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },
   { to: "/about", label: "ABOUT" },
+  // The channel list is a real page with a real route and real database content,
+  // so it belongs beside the other public pages rather than buried in the footer.
+  // MobileMenu renders from this same list, so it appears there too.
+  { to: "/contact", label: "CONTACT" },
 ];
 
 export default function Navbar() {

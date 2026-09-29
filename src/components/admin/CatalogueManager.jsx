@@ -18,6 +18,10 @@ import { useCallback, useEffect, useState } from "react";
 import { ENTRY_TYPES, PAYMENT_MODES } from "../../data/events.js";
 import {
   loadPublicCatalogue,
+  can as roleCan,
+  staffDeleteBundle,
+  staffDeleteEvent,
+  staffListCatalogue,
   staffRetireBundle,
   staffRetireEvent,
   staffUpsertBundle,
@@ -135,7 +139,7 @@ function toBundleForm(row) {
 /* events                                                              */
 /* ------------------------------------------------------------------ */
 
-function EventEditor({ events, token, onSaved, onError }) {
+function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) {
   const [form, setForm] = useState(emptyEvent);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) =>
@@ -223,6 +227,36 @@ function EventEditor({ events, token, onSaved, onError }) {
     onSaved();
   }
 
+  /**
+   * Permanently remove an event. Master only, and the database refuses anything
+   * somebody has registered for or that a live bundle seats.
+   *
+   * `window.confirm` names the event, because "Delete" beside a list of nine is
+   * a coin flip. It also says the word permanent, so the difference from the
+   * Retire button next to it is not a surprise. The confirm is a courtesy - the
+   * role check and the reference checks both live in the RPC, where a caller
+   * that skips this prompt still cannot get past them.
+   */
+  async function remove(id, title) {
+    if (busy) return;
+    if (
+      !window.confirm(
+        `Permanently delete "${title}"?\n\nThis cannot be undone, and it is refused if anybody has registered for it. Retire it instead if you only want it off the public site.`
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    const result = await staffDeleteEvent(id, token);
+    setBusy(false);
+    if (!result.ok) {
+      onError(result.body?.error ?? "The event could not be deleted.");
+      return;
+    }
+    onDeleted?.(`"${title}" was deleted permanently.`);
+  }
+
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
       <div>
@@ -256,6 +290,21 @@ function EventEditor({ events, token, onSaved, onError }) {
                   className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-ash transition hover:border-red-400/60 hover:text-bone"
                 >
                   Retire
+                </button>
+              ) : null}
+              {/* Delete is shown for a RETIRED row only, and to a master only.
+                  Retiring first is the deliberate order: it is the step that
+                  takes something off the public site, and delete is the
+                  irreversible one. Offering both on a live row invites the
+                  wrong click on the button people reach for. */}
+              {canDelete ? (
+                <button
+                  type="button"
+                  data-action="delete-event"
+                  onClick={() => remove(e.id, e.title)}
+                  className="border border-red-400/40 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-red-300/80 transition hover:border-red-400 hover:text-red-200"
+                >
+                  Delete
                 </button>
               ) : null}
             </li>
@@ -498,7 +547,7 @@ const emptyBundle = {
   includes: [],
 };
 
-function BundleEditor({ bundles, events, token, onSaved, onError }) {
+function BundleEditor({ bundles, events, token, onSaved, onError, onDeleted, canDelete }) {
   const [form, setForm] = useState(emptyBundle);
   const [busy, setBusy] = useState(false);
 
@@ -582,6 +631,27 @@ function BundleEditor({ bundles, events, token, onSaved, onError }) {
     onSaved();
   }
 
+  /** Permanently remove a bundle, its include lines and its price. Master only. */
+  async function remove(id, label) {
+    if (busy) return;
+    if (
+      !window.confirm(
+        `Permanently delete "${label}"?\n\nIts include lines and its price go with it. This cannot be undone, and it is refused if anybody has bought it.`
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    onError(null);
+    const result = await staffDeleteBundle(id, token);
+    setBusy(false);
+    if (!result.ok) {
+      onError(result.body?.error ?? "The bundle could not be deleted.");
+      return;
+    }
+    onDeleted?.(`"${label}" was deleted permanently.`);
+  }
+
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_24rem]">
       <div>
@@ -609,6 +679,19 @@ function BundleEditor({ bundles, events, token, onSaved, onError }) {
                   className="border border-line px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-ash transition hover:border-red-400/60 hover:text-bone"
                 >
                   Retire
+                </button>
+              ) : null}
+              {/* Master only, and offered on a retired row: retire is the
+                  reversible way off the public site, delete is the one that
+                  erases the lines and the price for good. */}
+              {canDelete ? (
+                <button
+                  type="button"
+                  data-action="delete-bundle"
+                  onClick={() => remove(b.id, `#${b.number} ${b.name}`)}
+                  className="border border-red-400/40 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-red-300/80 transition hover:border-red-400 hover:text-red-200"
+                >
+                  Delete
                 </button>
               ) : null}
             </li>
@@ -758,7 +841,13 @@ export default function CatalogueManager({ session }) {
   // event), and a list that disagreed with the database would be worse than one
   // that is briefly stale.
   const reload = useCallback(() => {
-    loadPublicCatalogue().then((result) => {
+    // staffListCatalogue, not loadPublicCatalogue. The public one filters to
+    // `is_active` because it feeds the public site, so using it here meant a
+    // retired event or bundle was invisible in the one screen whose job is
+    // editing the catalogue - it could not be seen, restored, or deleted, and
+    // the only record it existed was the audit log. Live rows first, retired
+    // below, so the working set stays at the top of the list.
+    staffListCatalogue(session.token).then((result) => {
       if (result.ok) {
         setCatalogue({ events: result.events, bundles: result.bundles });
         setError(null);
@@ -766,7 +855,12 @@ export default function CatalogueManager({ session }) {
         setError(result.error);
       }
     });
-  }, []);
+    // `session.token` is a dependency because the list is now a STAFF read
+    // rather than the public one - without it in the deps the callback would
+    // capture the token from the first render, which is null before sign-in,
+    // and the console would show "Only a master administrator can read the full
+    // catalogue" forever.
+  }, [session.token]);
 
   useEffect(reload, [reload]);
 
@@ -829,6 +923,12 @@ export default function CatalogueManager({ session }) {
           token={session.token}
           onError={setError}
           onSaved={() => saved("Event saved. The public catalogue is updated.")}
+          onDeleted={(message) => {
+            setError(null);
+            setOk(message);
+            reload();
+          }}
+          canDelete={roleCan(session.role, "delete_catalogue")}
         />
       ) : (
         <BundleEditor
@@ -837,6 +937,12 @@ export default function CatalogueManager({ session }) {
           token={session.token}
           onError={setError}
           onSaved={() => saved("Bundle saved. The public catalogue is updated.")}
+          onDeleted={(message) => {
+            setError(null);
+            setOk(message);
+            reload();
+          }}
+          canDelete={roleCan(session.role, "delete_catalogue")}
         />
       )}
     </section>
