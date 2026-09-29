@@ -241,8 +241,43 @@ async function settle(page, timeout = 12000) {
 }
 
 let browser = null;
+var SINGLE_SEATS = [];
 try {
   await cleanup();
+
+  /* ---- the single-event fixtures this suite registers against ----
+   * Sections A and C register one paid event each, and they assumed those
+   * events were priced. They are not necessarily: a price is a business
+   * decision, and when one is withdrawn the wizard correctly treats the event as
+   * free - so the wizard was right and the suite was wrong, reporting a PAID
+   * flow that had quietly become a FREE one. The fixture is created here, at
+   * the entry type the catalogue actually charges today, and removed in the
+   * finally block. */
+  const singleTypes = await sql(
+    `select id, entry_type from public.event_catalogue
+      where id in ('nexus-breach', 'free-fire') and is_active`
+  );
+  for (const seat of singleTypes) {
+    // Only where a price is genuinely absent, and only record it as ours if we
+    // are the ones who added it. Writing a second row for an already-priced
+    // event would leave the catalogue ambiguous, and a teardown that deleted by
+    // value could take a real price with it.
+    const existing = await sql(
+      `select count(*)::int as n from public.pricing
+        where kind = 'event' and ref_id = '${seat.id}' and is_active`
+    );
+    if (existing[0].n > 0) continue;
+    await sql(
+      `insert into public.pricing (kind, ref_id, price, entry_type, is_active)
+         values ('event', '${seat.id}', 249, '${seat.entry_type}', true)`
+    );
+    SINGLE_SEATS.push(seat.id);
+  }
+  out(
+    singleTypes.length === 2,
+    "both single-event fixtures are active, so the paid flows can be driven",
+    `events=${singleTypes.map((s) => s.id).join(",")}`
+  );
 
   const key = await serviceKey();
   out(Boolean(key), "a service key is available to mint the probe session");
@@ -366,29 +401,77 @@ try {
   );
 
   /* ============ B. a bundle: selection, profile resume, and the refresh dead end ============ */
-// The flow under test is real and still in the product, but "a bundle exists and
-// is on sale" is a business decision, not a test fixture. This section used to
-// assume bundle/bundled-299 was published and simply drove it, so the day a
-// master retired that bundle the whole section collapsed into "That bundle is
-// not available" and six assertions about SELECTION, RESUME and REFRESH — none
-// of which care about pricing or publication — went down with it. So publish it
-// here, remember what it really was, and put it back in the finally block. The
-// test now states its own precondition instead of silently inheriting one.
-// `var`, not `const`: this sits inside the try block but is read in the finally
-// block, and `const` would be scoped to the try and throw a ReferenceError on
-// the very path that exists to clean up after a failure.
-var BUNDLE_ID = "bundled-299";
-var bundleWasActive = undefined;
-const bundleWas = await sql(
-  `select is_active from public.bundle_catalogue where id = '${BUNDLE_ID}'`
-);
-if (bundleWas.length === 0) {
-  console.error(`FAIL: ${BUNDLE_ID} is missing from the catalogue — run npm run db:migrate`);
-  process.exit(1);
-}
-bundleWasActive = bundleWas[0].is_active;
-await sql(`update public.bundle_catalogue set is_active = true where id = '${BUNDLE_ID}'`);
+  // Everything this section needs, it creates. It used to drive the seeded
+  // bundle/bundled-299 and assume the catalogue was in some state: that the
+  // bundle existed, and that the events it seats carried a price. Both are
+  // business decisions - a master can retire a bundle, re-price an event, or
+  // delete the seeded rows outright - so inheriting them meant the day somebody
+  // did, the suite reported a product bug that was really a fixture that had
+  // gone. It reported it as a PAID FLOW turning into a FREE ONE, which is about
+  // as confusing a failure as this suite can produce.
+  //
+  // What is created is a bundle with a pick-pool (the only shape that has a
+  // selection step at all) plus the prices its lines need. All of it is removed
+  // in the finally block, and nothing pre-existing is edited.
+  // `var`, not `const`: this sits inside the try but is read in the finally, and
+  // `const` would be scoped to the try and throw a ReferenceError on the very
+  // path that exists to clean up after a failure.
+  var BUNDLE_ID = "zz-reg-bundle";
+  var SEAT_A = "vision-2065";
+  var SEAT_B = "paradox-2065";
 
+  await sql(`delete from public.bundle_catalogue where id = '${BUNDLE_ID}'`);
+
+  // The two events the bundle seats. Both are active in every season so far,
+  // but "is active" is still a business decision, and the price has to be written
+  // against whatever entry type the catalogue charges TODAY rather than an
+  // assumed one - registration_set_events refuses an unpriced seat, and that
+  // refusal is indistinguishable from a broken wizard.
+  const seatTypes = await sql(
+    `select id, entry_type from public.event_catalogue
+      where id in ('${SEAT_A}', '${SEAT_B}') and is_active`
+  );
+  if (seatTypes.length !== 2) {
+    console.error(
+      `FAIL: the bundle flow needs two active events to seat, ${SEAT_A} and ${SEAT_B}`
+    );
+    process.exit(1);
+  }
+  for (const seat of seatTypes) {
+    // Same rule as the single-event fixtures: write a price only where there is
+    // none. These two are normally priced by the operators, and a second row for
+    // an event that already has one makes "what does this cost?" ambiguous -
+    // which is the one question the whole catalogue exists to answer.
+    const already = await sql(
+      `select count(*)::int as n from public.pricing
+        where kind = 'event' and ref_id = '${seat.id}' and is_active`
+    );
+    if (already[0].n > 0) continue;
+    await sql(
+      `insert into public.pricing (kind, ref_id, price, entry_type, is_active)
+         values ('event', '${seat.id}', 250, '${seat.entry_type}', true)`
+    );
+    SINGLE_SEATS.push(seat.id);
+  }
+
+  await sql(
+    `insert into public.bundle_catalogue
+       (id, number, name, group_id, kicker, sort_order, is_active, content_key)
+     values ('${BUNDLE_ID}', 'ZZ', 'REGISTER PROBE', 'nexus-forge', 'probe', 900, false, '')`
+  );
+  // Positions 0..n-1, which is the invariant migration ...018 exists to protect.
+  await sql(
+    `insert into public.bundle_includes (bundle_id, position, event_id, pick_realm, pick_count, exclude_hackathon)
+     values ('${BUNDLE_ID}', 0, '${SEAT_A}', null, null, false),
+            ('${BUNDLE_ID}', 1, null, 'paradox', 1, false)`
+  );
+  await sql(
+    `insert into public.pricing (kind, ref_id, price, entry_type, is_active)
+     values ('bundle', '${BUNDLE_ID}', 299, 'individual', true)`
+  );
+  // Published last: an ACTIVE bundle must have a content key, and the key is
+  // filled by the trigger when the include lines land.
+  await sql(`update public.bundle_catalogue set is_active = true where id = '${BUNDLE_ID}'`);
 
   await page.goto(`${BASE}/register?bundle=${BUNDLE_ID}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
@@ -416,12 +499,37 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   out(afterPick.utr, "saving the choice moves to the payment step", `error=${afterPick.error}`);
 
   const awaiting = await sql(
-    `select payment_status, utr_number, purchase_ref from public.registrations where email = '${EMAIL_B}'`
+    `select payment_status, utr_number, purchase_ref, purchase_label, purchase_amount
+       from public.registrations where email = '${EMAIL_B}'`
   );
   out(
     awaiting[0]?.payment_status === "awaiting_utr" && awaiting[0]?.utr_number == null,
     "the selection wrote the row BEFORE any payment reference",
     `${awaiting[0]?.payment_status} utr=${awaiting[0]?.utr_number}`
+  );
+
+  /* ---- what the ROSTER will show an operator about this purchase ----
+   * This is the assertion that was missing, and its absence is why two bugs
+   * shipped: the roster prints purchase_label and purchase_amount verbatim, so
+   * a registration that recorded neither of them properly looked fine here and
+   * useless in the one place a master actually reads it.
+   *
+   * Both used to be wrong. purchase_label was overwritten with the bundle's
+   * catalogue id, so a master saw "bundel-off-grid" and could not tell what had
+   * been bought. purchase_amount was written only by the selection RPC, so any
+   * registration without a selection step - every single paid event - carried a
+   * NULL amount next to a payment that was really made. */
+  out(
+    awaiting[0]?.purchase_label &&
+      awaiting[0].purchase_label !== awaiting[0]?.purchase_ref &&
+      !awaiting[0].purchase_label.includes(BUNDLE_ID),
+    "the row records the bundle in WORDS, not as its catalogue id",
+    `label="${awaiting[0]?.purchase_label}" ref=${awaiting[0]?.purchase_ref}`
+  );
+  out(
+    typeof awaiting[0]?.purchase_amount === "number" && awaiting[0].purchase_amount > 0,
+    "and the amount the participant is paying is on the row",
+    `amount=${awaiting[0]?.purchase_amount}`
   );
 
   /* ---- the profile offers CONTINUE, and it lands on the right step ---- */
@@ -458,7 +566,7 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   out(
     afterReload.utr,
     "refreshing a ?resume= URL returns to the same step (state comes from the row)",
-    `details=${afterReload.details} utr=${afterReload.utr} error="${afterReload.error}"`
+    `details=${afterReload.details} select=${afterReload.select} utr=${afterReload.utr} success=${afterReload.success} track="${afterReload.current}" error="${afterReload.error}"`
   );
 
   /* ---- back walks the wizard backwards, and the details are still prefilled ----
@@ -492,7 +600,7 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
    * wizard's memory of the row it created at the selection step. This is the
    * path that used to strand the participant on "This email is already
    * registered", so it is exercised rather than described. */
-  await page.goto(`${BASE}/register?bundle=bundled-299`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/register?bundle=${BUNDLE_ID}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(2000);
   await fillDetails(page, EMAIL_B, { roll: "21ZZZ02" });
   const afterRefill = await state(page);
@@ -518,7 +626,7 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   );
   out(rowsB[0]?.n === 1, "adoption created NO duplicate row for that email", `rows=${rowsB[0]?.n}`);
   out(
-    Boolean(rowsB[0]?.utr) && rowsB[0]?.ref === "bundled-299",
+    Boolean(rowsB[0]?.utr) && rowsB[0]?.ref === BUNDLE_ID,
     "the reference reached the row that already existed",
     `${rowsB[0]?.ref} utr=${rowsB[0]?.utr}`
   );
@@ -646,9 +754,20 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   if (browser) await browser.close();
   // Restore the bundle to whatever the operators had it set to, so running this
   // test never publishes or withdraws a bundle behind their back.
-  if (bundleWasActive !== undefined) {
+  // Remove the bundle this run created, and the prices it needed. Restoring an
+  // is_active is not enough any more because the bundle may not have existed
+  // before this run at all - the seeded one it used to drive has since been
+  // withdrawn from the catalogue by the operators.
+  if (BUNDLE_ID) {
     await sql(
-      `update public.bundle_catalogue set is_active = ${bundleWasActive} where id = '${BUNDLE_ID}'`
+      `delete from public.pricing where ref_id = '${BUNDLE_ID}';
+       delete from public.bundle_catalogue where id = '${BUNDLE_ID}';`
+    );
+  }
+  for (const seat of SINGLE_SEATS) {
+    await sql(
+      `delete from public.pricing
+        where kind = 'event' and ref_id = '${seat}' and price in (249, 250)`
     );
   }
   await cleanup();

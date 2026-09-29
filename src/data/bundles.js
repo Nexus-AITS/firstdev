@@ -7,7 +7,7 @@
  */
 import { events, getEventById, getEventView } from "./events.js";
 import { realms } from "./realms.js";
-import { getLiveBundles, getLiveEventsByRealm } from "./catalogue.js";
+import { getLiveBundle, getLiveBundles, getLiveEventsByRealm } from "./catalogue.js";
 import { getPrice, registerFallbackPrice } from "./pricing.js";
 
 const HACKATHON_ID =
@@ -117,7 +117,53 @@ export const bundleGroups = [
 
 export const bundles = bundlesList;
 
+/**
+ * One bundle, by id, from whichever source is current.
+ *
+ * THE BUG THIS FIXES
+ *
+ * This used to be a single `bundlesList.find(...)` over the COMPILED array, so
+ * it could only ever return a bundle that shipped inside the JavaScript. A
+ * bundle a master created in the console is therefore invisible here - while
+ * `getBundleGroups`, the function that builds the /bundled grid, DOES read the
+ * live catalogue. The two disagreed, and the consequence was a dead end that
+ * looked fine from the outside:
+ *
+ *   /bundled lists the new bundle, and its Claim button links to
+ *   /register?bundle=<id>  --->  getBundleById returns null
+ *
+ * The register page then has no bundle, so there is no pick-pool, no
+ * "PAYMENT REFERENCE" step, and `purchase` is null, so the row is written with
+ * purchase_type NULL. A participant pays a QR, pastes a UTR, and the console
+ * records that they bought nothing at all. The card rendered because the LIST
+ * was live; the purchase was lost because the LOOKUP was not. That is the
+ * answer to "a master created a bundle and the roster does not say which one".
+ *
+ * The order is live first, then compiled. A bundle that exists in both reads
+ * from the database, so a rename or a re-price in the console is what the
+ * participant sees and what the QR is built from. `null` still means "no such
+ * bundle", which is what a retired or never-published id must return.
+ */
 export function getBundleById(id) {
+  if (!id) return null;
+
+  const live = getLiveBundle(id);
+  if (live) {
+    return {
+      id: live.id,
+      number: live.number ?? "",
+      name: live.name ?? "",
+      // 0 is a real price (FREE); null means the database has no price for this
+      // bundle at all, which is a gap the operator must fix - never a number to
+      // invent here.
+      price: live.price == null ? null : Number(live.price),
+      includes: Array.isArray(live.includes) ? live.includes : [],
+      group: live.group_id ?? "nexus-forge",
+      kicker: live.kicker ?? null,
+      titleLines: live.title_lines ?? [],
+    };
+  }
+
   return bundlesList.find((bundle) => bundle.id === id) ?? null;
 }
 

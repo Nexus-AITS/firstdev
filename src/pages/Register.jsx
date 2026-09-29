@@ -10,9 +10,10 @@ import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
 import { getEventFee, getEventFields, getEntryType, getPaymentMode } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
-import { loadCatalogue } from "../data/catalogue.js";
+import { loadCatalogue, getCatalogueVersion, catalogueLoaded } from "../data/catalogue.js";
 import useEventView from "../hooks/useEventView.js";
 import usePricing from "../hooks/usePricing.js";
+import { getPricingVersion, pricingLoaded } from "../data/pricing.js";
 import {
   addRegistration,
   listRegistrations,
@@ -139,6 +140,12 @@ export default function Register() {
   // the master had already changed. usePricing() re-runs this once the database
   // answers, so the QR amount and the free/paid routing both follow the console.
   usePricing();
+  // The two store versions, read here so the resume effect below can list them
+  // as dependencies. See the comment on that effect: without them it reuses a
+  // closure built before the catalogue answered, and reads a paid registration
+  // as a free one.
+  const catalogueVersion = getCatalogueVersion();
+  const pricingVersion = getPricingVersion();
   const fee = event ? getEventFee(event.id) : bundle ? getBundlePrice(bundle.id) : null;
   // payment: 0 is an explicit FREE entry (events.js requires the field), so only
   // a positive amount may route through the QR + UTR steps. getEventFee and
@@ -249,11 +256,39 @@ export default function Register() {
     setDone(row);
     setConfirmedAmount(null);
 
-    if (row.utr_number || !paid) {
+    /* Which step this row is waiting on, read from the STORES at the moment of
+     * the decision rather than from `paid` and `needsSelection` out of this
+     * function's closure.
+     *
+     * That closure is the bug. `paid` is derived from a price that arrives over
+     * the network, and on a cold reload of a ?resume= URL this ran before it had:
+     * getBundleById found no bundle, `fee` was null, `paid` was false, and a
+     * participant who had already paid was dropped straight onto the
+     * CONFIRM screen for a registration whose UTR was never submitted. The row
+     * says plainly what is outstanding - a purchase_amount and no utr_number -
+     * and the page contradicted it.
+     *
+     * A previous attempt fixed this by re-running the effect once the stores
+     * had loaded. That is not enough on its own, because the re-run is only a
+     * re-run if something re-renders this component, and a `?resume=` landing
+     * can reach the decision without one. So the values are fetched HERE, from
+     * the ids in the URL, which never change and so are always current.
+     */
+    const bundleId = searchParams.get("bundle");
+    const eventId = searchParams.get("event");
+    const liveBundle = bundleId ? getBundleById(bundleId) : null;
+    const paidNow = liveBundle
+      ? Number(getBundlePrice(bundleId) ?? 0) > 0
+      : eventId
+        ? Number(getEventFee(eventId) ?? 0) > 0
+        : false;
+    const needsNow = Boolean(liveBundle?.includes?.some((line) => line.pick));
+
+    if (row.utr_number || !paidNow) {
       setStep("done");
       return;
     }
-    if (needsSelection) {
+    if (needsNow) {
       const { data: chosen } = await listRegistrationEvents(row.id);
       setStep((chosen ?? []).length > 0 ? "utr" : "select");
       return;
@@ -349,7 +384,7 @@ export default function Register() {
     return () => {
       alive = false;
     };
-  }, [authReady, signedIn]);
+  }, [authReady, signedIn, catalogueVersion, pricingVersion]);
 
   function proceedFromDetails(e) {
     e.preventDefault();
@@ -593,6 +628,10 @@ export default function Register() {
       if (!resumeId || resumedRef.current === resumeId) return;
       const target = rows.find((r) => r.id === resumeId);
       if (!target) return;
+      // `adopt` reads the catalogue and the price table itself at the moment it
+      // decides, so it does not matter here whether either has answered yet.
+      // See the note on adopt() for why that used to send a paid registration
+      // straight to the confirmation screen.
       resumedRef.current = resumeId;
       await adopt(target);
     });
