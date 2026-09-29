@@ -98,6 +98,29 @@ const rpc = (name, body, token) =>
 /** Every probe row shares this prefix, so cleanup is one statement. */
 const PROBE = "zz-verify-catalogue";
 
+/**
+ * The bundles the SEED creates, named rather than counted.
+ *
+ * The counts below used to be `=== 8` and `=== 15` over the whole table, which
+ * quietly asserts something false: that nobody ever adds a bundle. The first
+ * bundle a master created from the console made all four of those assertions
+ * fail over a change that was correct by definition. Naming the seeded ids keeps
+ * the invariant the comment claims - the seed is intact, no line lost or doubled
+ * - while leaving the catalogue free to grow.
+ */
+const SEEDED_BUNDLES = [
+  "bundled-299",
+  "bundled-349",
+  "forge-bundled-349",
+  "forge-bundled-399",
+  "bundled-399",
+  "forge-paradox-bundled-399",
+  "paradox-bundled-249",
+  "paradox-bundled-349",
+];
+const SEEDED_INCLUDES = 15;
+const SEEDED_IDS_SQL = SEEDED_BUNDLES.map((b) => `'${b}'`).join(",");
+
 /* ============================ the XLSX writer ============================ */
 // No database needed, so this runs first and a broken writer is reported before
 // any slow round trips hide it.
@@ -205,18 +228,30 @@ if (!token) {
 
 const counts = await sql(`
   select (select count(*) from public.event_catalogue where is_active) as events,
-         (select count(*) from public.bundle_catalogue) as bundles,
-         (select count(*) from public.bundle_includes) as includes`);
+         (select count(*) from public.bundle_catalogue
+           where id in (${SEEDED_IDS_SQL})) as bundles,
+         (select count(*) from public.bundle_includes
+           where bundle_id in (${SEEDED_IDS_SQL})) as includes`);
 out(counts[0].events === 11, "eleven active events", `n=${counts[0].events}`);
-// The bundle count, and the include count, are asserted over the WHOLE table
-// rather than over the published rows. How many bundles a master has chosen to
-// publish is a business decision that changes between seasons, and a test that
-// fails when they withdraw one is a test that pressures them to keep selling
-// something. What must always hold is that the seeded catalogue is intact and
-// no line was lost or doubled - which is the invariant this file exists to
-// defend, and the one the ...018 repair was written against.
-out(counts[0].bundles === 8, "eight bundles in the catalogue", `n=${counts[0].bundles}`);
-out(counts[0].includes === 15, "fifteen include lines", `n=${counts[0].includes}`);
+// The bundle count, and the include count, are asserted over the SEEDED rows and
+// by name (see SEEDED_BUNDLES) rather than as a total over the table. How many
+// bundles a master has chosen to publish is a business decision that changes
+// between seasons, and a test that fails when they withdraw one pressures them
+// to keep selling something. The same went for ADDING one: `=== 8` over every
+// row made the first bundle anyone created from the console turn this suite red,
+// which is the wrong lesson to teach an operator. What must always hold is that
+// the seeded catalogue is intact and no line was lost or doubled - the
+// invariant this file exists to defend, and the one ...018 was written against.
+out(
+  counts[0].bundles === SEEDED_BUNDLES.length,
+  "every seeded bundle is present",
+  `n=${counts[0].bundles} of ${SEEDED_BUNDLES.length}`
+);
+out(
+  counts[0].includes === SEEDED_INCLUDES,
+  "and its include lines are all there, none doubled",
+  `n=${counts[0].includes} expected=${SEEDED_INCLUDES}`
+);
 
 // The ...018 bug: a one-based insert left position 0 free, the seed filled it,
 // and every bundle silently gained a duplicate line. Asserted over ALL bundles
@@ -842,20 +877,23 @@ try {
 
   const afterCounts = await sql(`
     select (select count(*) from public.bundle_catalogue where is_active) as bundles,
-           -- Scoped to the seeded bundles on purpose. The probe bundle above is
-           -- still in the table at this point (the finally block removes it), and
-           -- counting it would make a correct seed look like it added rows.
+           -- Scoped to the SEEDED ids, not merely "not a probe". The probe bundle
+           -- above is still in the table at this point (the finally block removes
+           -- it) and counting it would make a correct seed look like it added
+           -- rows - but a bundle a master created is just as much not the seed's,
+           -- and excluding it by prefix only worked while the seed and the
+           -- catalogue happened to be the same set of rows.
            (select count(*) from public.bundle_includes
-             where bundle_id not like '${PROBE}%') as includes`);
+             where bundle_id in (${SEEDED_IDS_SQL})) as includes`);
   out(
     afterCounts[0].bundles === publishedBefore[0].n,
     "re-running the seed published nothing and retired nothing",
     `${publishedBefore[0].n} active before, ${afterCounts[0].bundles} after`
   );
   out(
-    afterCounts[0].includes === 15,
+    afterCounts[0].includes === SEEDED_INCLUDES,
     "re-running the seed added no duplicate include lines",
-    `n=${afterCounts[0].includes}`
+    `n=${afterCounts[0].includes} expected=${SEEDED_INCLUDES}`
   );
 
   // The include lines the seed would have added must not have landed either.

@@ -177,16 +177,30 @@ for (const vp of VIEWPORTS) {
   /* bundle cards all hand off to the register wizard */
   await page.goto(BASE + "/bundled", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const claims = await page.locator('main a[href^="/register?bundle="]').count();
-  out(claims === 8, "bundle CTAs route to register", `count=${claims}`);
+  const claimHrefs = await page
+    .locator('main a[href^="/register?bundle="]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+  // How many bundles are published is the operator's decision - it was 8, then 0,
+  // then 1 - so the count is not asserted. What must hold is that whatever IS
+  // published routes into the wizard, and that the list is not empty of CTAs
+  // while bundles exist.
+  out(
+    claimHrefs.length >= 1 && claimHrefs.every((h) => h.startsWith("/register?bundle=")),
+    "every published bundle CTA routes to the register wizard",
+    `count=${claimHrefs.length}`
+  );
   await page.locator('main a[href^="/register?bundle="]').first().click();
   await page.waitForTimeout(900);
   const bUrl = new URL(page.url());
+  // Compared against the href that was actually clicked, not a hardcoded id.
+  // "bundled-299" was right when all eight were published and wrong the moment
+  // any one of them was retired or replaced.
+  const clickedBundle = new URL(claimHrefs[0], BASE).searchParams.get("bundle");
   out(
     bUrl.pathname === "/register" &&
-      bUrl.searchParams.get("bundle") === "bundled-299" &&
+      bUrl.searchParams.get("bundle") === clickedBundle &&
       (await page.locator("#reg-auth-gate").isVisible().catch(() => false)),
-    "bundle register hand-off",
+    "bundle register hand-off keeps the bundle the card was offering",
     `${bUrl.pathname}${bUrl.search}`
   );
 
@@ -209,8 +223,14 @@ for (const vp of VIEWPORTS) {
 
   await page.goto(BASE + "/events/paradox", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const soloPrice = await page.getByText("₹149 · INDIVIDUAL").count();
-  out(soloPrice >= 4, "paradox list shows individual pricing", `count=${soloPrice}`);
+  // Not a hardcoded rupee figure. These four are priced by the database, and
+  // they have been re-priced (149, then 99) - an assertion naming the number
+  // just reports the price the operator chose, not whether the page is showing
+  // it. What matters is that each card shows SOME rupee fee AND the entry-type
+  // marker, which is what proves the live catalogue is driving the list.
+  const paradoxBody = await page.locator("main").innerText();
+  const soloPrice = (paradoxBody.match(/₹\s?\d{2,4}\s*[·•]\s*INDIVIDUAL/gi) ?? []).length;
+  out(soloPrice >= 4, "paradox list shows live per-person pricing on every card", `count=${soloPrice}`);
 
   /* FREE FIRE is a PAID, ranked event: ₹149 per person, because it is scored
    * on the player's in-game account. It used to be checked as a free entry —
@@ -219,14 +239,24 @@ for (const vp of VIEWPORTS) {
    * price, so the assertion is that the price is shown, not that it is absent. */
   await page.goto(BASE + "/events/free-fire", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
-  const ffFee = await page.getByText("₹149", { exact: true }).count();
+  const ffBody = await page.locator("body").innerText();
+  // No hardcoded rupee figure. The price is the DATABASE's business - Free Fire
+  // has been re-priced more than once (149 per person, then 300 for the whole
+  // squad) and this assertion was the thing that broke each time. What it
+  // actually guards is the bug named above: the page must show a fee, and must
+  // never render the event as free. verify-pricing is where the number itself
+  // is checked, against public.pricing.
+  const ffFee = /₹\s?\d{2,4}/.test(ffBody);
   const ffFree = await page.getByText("FREE", { exact: true }).count();
   const ffLogo = await page.locator('[data-event-logo="free-fire"]').count();
-  out(ffFee >= 1, "FREE FIRE shows its ₹149 entry fee", `count=${ffFee}`);
-  out(ffFree === 0, "FREE FIRE never renders as a free entry", `free=${ffFree}`);
+  out(
+    ffFee && ffFree === 0,
+    "FREE FIRE shows a rupee entry fee and never renders as a free entry",
+    `rupeeFee=${ffFee} free=${ffFree}`
+  );
   out(ffLogo === 1, "FREE FIRE renders its logo on the event page", `logos=${ffLogo}`);
 
-  // …and its wizard is a paid one: fee strip, four steps, QR/UTR copy.
+  // …and its wizard is a paid one: fee strip, three steps, QR/UTR copy.
   await page.goto(BASE + "/register?event=free-fire", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(900);
   // The stepper is hidden while signed out, so the step COUNT is read from the
@@ -237,8 +267,8 @@ for (const vp of VIEWPORTS) {
   const ffFeeStrip = await page.getByText("entry fee", { exact: true }).count();
   const ffQrCopy = await page.getByText("pay with the QR below").count();
   out(
-    ffSteps === 4 && ffFeeStrip >= 1 && ffQrCopy >= 1,
-    "FREE FIRE wizard charges (4 steps, fee strip, QR/UTR)",
+    ffSteps === 3 && ffFeeStrip >= 1 && ffQrCopy >= 1,
+    "FREE FIRE wizard charges (3 steps, fee strip, QR/UTR)",
     `steps=${ffSteps} feeStrip=${ffFeeStrip} qrCopy=${ffQrCopy}`
   );
 

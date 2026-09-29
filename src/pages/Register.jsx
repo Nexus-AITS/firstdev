@@ -255,10 +255,10 @@ export default function Register() {
     }
     if (needsSelection) {
       const { data: chosen } = await listRegistrationEvents(row.id);
-      setStep((chosen ?? []).length > 0 ? "pay" : "select");
+      setStep((chosen ?? []).length > 0 ? "utr" : "select");
       return;
     }
-    setStep("pay");
+    setStep("utr");
   }
 
   /* The stepper is built from the same list the progress bar renders, and the
@@ -276,18 +276,35 @@ export default function Register() {
    * their registration, the tracker said they were back at step one — which
    * reads as "my submission did nothing". The stepper and the wizard have to
    * agree about what the last step IS. */
+  // The QR and the reference are ONE step. They were two, and a paid bundle
+  // read as five: details, choose events, QR, reference, confirm. The QR is not
+  // a decision - it is the instruction for the thing on the same screen. A
+  // participant scanning it has not finished anything yet, and making them
+  // click "I have paid" before they had even been asked for the reference had
+  // them promise payment before they could read the amount. So the QR now sits
+  // above the UTR field on the PAYMENT REFERENCE step, and a bundle reads as
+  // four: details, choose events, payment reference, confirm.
   const stepList = [
     { id: "details", label: "YOUR DETAILS" },
     ...(needsSelection ? [{ id: "select", label: "CHOOSE EVENTS" }] : []),
-    ...(paid
-      ? [
-          { id: "pay", label: "PAYMENT QR" },
-          { id: "utr", label: "PAYMENT REFERENCE" },
-        ]
-      : []),
+    ...(paid ? [{ id: "utr", label: "PAYMENT REFERENCE" }] : []),
     { id: "done", label: "CONFIRM" },
   ];
   const stepIndex = Math.max(0, stepList.findIndex((s) => s.id === step));
+
+  /* The screen's own number, derived from where it sits in stepList rather than
+     typed into the markup. It used to be written in as "Step 01"/"Step 02"/
+     "Step 03", which is correct for only one shape of flow: a bundle with a
+     selection step and one without cannot both be right, and a flow that gained
+     or lost a step silently kept the old numbers. */
+  const stepNumber = `Step ${String(stepIndex + 1).padStart(2, "0")}`;
+
+  /* Back goes to whatever the list says came before, so removing or adding a
+     conditional step cannot leave a "back" that lands somewhere impossible. */
+  function stepBack() {
+    const prev = stepList[stepIndex - 1];
+    if (prev) setStep(prev.id);
+  }
 
   // While the session is still resolving the page must not claim to be either
   // signed in or signed out — the register/verify suite and a returning
@@ -350,10 +367,10 @@ export default function Register() {
       return;
     }
     setError("");
-    // A bundle with pools needs the choice made and recorded before the QR,
-    // because the QR carries the amount the participant is about to pay.
+    // A bundle with pools needs the choice made and recorded before the payment
+    // screen, because that screen carries the amount they are about to pay.
     if (needsSelection) setStep("select");
-    else if (paid) setStep("pay");
+    else if (paid) setStep("utr");
     else finalize(null);
   }
 
@@ -424,7 +441,7 @@ export default function Register() {
     // The refreshed row keeps `mine` honest when we adopted an older one —
     // `created` is what stops us prepending the same registration twice.
     if (!created) setMine((current) => current.map((r) => (r.id === row.id ? row : r)));
-    setStep(paid ? "pay" : "done");
+    setStep(paid ? "utr" : "done");
   }
 
   /**
@@ -765,7 +782,7 @@ export default function Register() {
                   className="flex flex-col gap-5"
                 >
                   <header>
-                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 01</p>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">{stepNumber}</p>
                     <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
                       YOUR DETAILS
                     </h2>
@@ -865,7 +882,7 @@ export default function Register() {
                 <div id="reg-step-select" className="flex flex-col gap-6">
                   <header>
                     <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">
-                      Step 02
+                      {stepNumber}
                     </p>
                     <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
                       CHOOSE YOUR EVENTS
@@ -882,25 +899,45 @@ export default function Register() {
                     saving={saving}
                     error={error}
                   />
+
+                  {/* Back exists on the selection step because the step above it
+                      does. Payment goes back here (that is the step the list says
+                      came before), and without a way onward the participant who
+                      mistyped their roll number, or picked the wrong events, was
+                      stuck: no edit, no restart. The choice is already recorded
+                      on the row, so going back does not lose it. */}
+                  <button
+                    type="button"
+                    id="reg-select-back"
+                    onClick={stepBack}
+                    className="self-start text-[10px] uppercase tracking-[0.35em] text-crystal/40 transition-colors hover:text-lavender"
+                  >
+                    ← Back
+                  </button>
                 </div>
               ) : null}
 
-              {/* ---------------- step 3: payment QR ---------------- */}
-              {signedIn && step === "pay" ? (
-                <div id="reg-step-pay" className="flex flex-col gap-6 text-center">
+              {/* ------------- payment: the QR and the reference are one step ------------- */}
+              {signedIn && step === "utr" ? (
+                <form id="reg-step-utr" onSubmit={handleUtrSubmit} noValidate className="flex flex-col gap-5">
                   <header>
-                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 02</p>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">{stepNumber}</p>
                     <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
-                      PAYMENT QR
+                      PAYMENT REFERENCE
                     </h2>
                     <p className="mt-3 text-sm leading-relaxed text-crystal/55">
                       Scan with any UPI app and pay{" "}
                       <span className="text-gold">₹{payable}</span>
-                      {contextTitle ? ` for ${contextTitle}` : ""}. Keep the
-                      transaction reference — you will paste it next.
+                      {contextTitle ? ` for ${contextTitle}` : ""}, then paste the
+                      transaction reference below. The admin verifies it against
+                      the bank statement and confirms your seat.
                     </p>
                   </header>
 
+                  {/* The QR sits here rather than on a step of its own. It is the
+                      instruction for the field directly beneath it, and a
+                      participant who has scanned it has not finished anything yet
+                      — so there is nothing to "continue" past. */}
                   <div
                     id="reg-qr"
                     className="mx-auto w-fit border border-lavender/25 bg-white p-4"
@@ -936,37 +973,6 @@ export default function Register() {
                     <li>Amount: <span className="text-gold">₹{payable}</span> exactly</li>
                   </ul>
 
-                  <div className="flex flex-wrap items-center justify-between gap-5">
-                    <button
-                      type="button"
-                      id="reg-pay-back"
-                      onClick={() => setStep("details")}
-                      className="text-[10px] uppercase tracking-[0.35em] text-crystal/40 transition-colors hover:text-lavender"
-                    >
-                      ← Edit details
-                    </button>
-                    <CinematicButton type="button" id="reg-pay-next" onClick={() => setStep("utr")}>
-                      I have paid — continue
-                    </CinematicButton>
-                  </div>
-                </div>
-              ) : null}
-
-              {/* ---------------- step 3: UTR reference ---------------- */}
-              {signedIn && step === "utr" ? (
-                <form id="reg-step-utr" onSubmit={handleUtrSubmit} noValidate className="flex flex-col gap-5">
-                  <header>
-                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">Step 03</p>
-                    <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
-                      PAYMENT REFERENCE
-                    </h2>
-                    <p className="mt-3 text-sm leading-relaxed text-crystal/55">
-                      Paste the UTR / UPI reference number from your payment
-                      app (6–30 letters, digits or dashes). The admin verifies
-                      it against the bank statement and confirms your seat.
-                    </p>
-                  </header>
-
                   <div>
                     <label className={labelClass} htmlFor="reg-utr">UTR / transaction reference</label>
                     <input
@@ -988,10 +994,10 @@ export default function Register() {
                     <button
                       type="button"
                       id="reg-utr-back"
-                      onClick={() => setStep("pay")}
+                      onClick={stepBack}
                       className="text-[10px] uppercase tracking-[0.35em] text-crystal/40 transition-colors hover:text-lavender"
                     >
-                      ← Back to QR
+                      ← Back
                     </button>
                     <CinematicButton type="submit" id="reg-utr-submit">
                       Submit registration

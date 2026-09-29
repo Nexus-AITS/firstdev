@@ -140,7 +140,6 @@ const state = (page) =>
       gate: vis("#reg-auth-gate"),
       details: vis("#reg-step-details"),
       select: vis("#reg-step-select"),
-      pay: vis("#reg-step-pay"),
       utr: vis("#reg-step-utr"),
       success: vis("#reg-success"),
       error: txt("#reg-error"),
@@ -216,12 +215,8 @@ async function pickAndSave(page) {
   await page.waitForTimeout(2600);
 }
 
-/** Pay → paste the reference → submit. Shared by every paid flow below. */
+/** Paste the reference and submit. The QR is on the same screen now. */
 async function payAndSubmit(page, utr) {
-  if (await page.locator("#reg-step-pay").isVisible().catch(() => false)) {
-    await page.click("#reg-pay-next");
-    await page.waitForTimeout(700);
-  }
   await page.fill("#reg-utr", utr);
   await page.click("#reg-utr-submit");
   await page.waitForTimeout(2800);
@@ -283,12 +278,21 @@ try {
 
   await fillDetails(page, EMAIL_A, { roll: "21ZZZ01" });
   const afterDetails = await state(page);
-  out(afterDetails.pay, "details → payment QR", `error=${afterDetails.error}`);
+  // The QR is on this screen, not behind a "I have paid" click: a participant
+  // who has only looked at it has not done anything yet, so there is nothing to
+  // continue past. Details goes straight to the reference field.
+  out(
+    afterDetails.utr && (await page.locator("#reg-qr").isVisible().catch(() => false)),
+    "details → payment step, with the QR already on it",
+    `error=${afterDetails.error}`
+  );
 
-  await page.click("#reg-pay-next");
-  await page.waitForTimeout(700);
   const atUtr = await state(page);
-  out(atUtr.utr, "payment QR → reference step");
+  out(
+    (await page.locator("#reg-utr").isVisible().catch(() => false)) &&
+      (await page.locator("#reg-utr-submit").isVisible().catch(() => false)),
+    "the reference field and its submit button are on that same screen"
+  );
 
   /* ---- the UTR is mandatory ---- */
   await page.fill("#reg-utr", "");
@@ -386,15 +390,30 @@ bundleWasActive = bundleWas[0].is_active;
 await sql(`update public.bundle_catalogue set is_active = true where id = '${BUNDLE_ID}'`);
 
 
-  await page.goto(`${BASE}/register?bundle=bundled-299`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/register?bundle=${BUNDLE_ID}`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
+
+  // The bundle wizard is FOUR steps, and this is the assertion that says so:
+  //   01 YOUR DETAILS · 02 CHOOSE EVENTS · 03 PAYMENT REFERENCE · 04 CONFIRM
+  // It was five, because PAYMENT QR was a step between the choice and the
+  // reference. Nothing was removed to get here - the QR moved onto the reference
+  // screen, since scanning it is not a decision and there was nothing to
+  // "continue" past. A bundle that loses this is a bundle an operator has to
+  // re-explain, so it is checked rather than assumed.
+  const bundleSteps = await state(page);
+  out(
+    bundleSteps.steps === 4,
+    "a bundle reads as FOUR steps: details, choose events, payment reference, confirm",
+    `steps=${bundleSteps.steps} track="${bundleSteps.current}"`
+  );
+
   await fillDetails(page, EMAIL_B, { roll: "21ZZZ02" });
   const atSelect = await state(page);
   out(atSelect.select, "a bundle with pools asks for the choice first", `error=${atSelect.error}`);
 
   await pickAndSave(page);
   const afterPick = await state(page);
-  out(afterPick.pay, "saving the choice moves to the payment QR", `error=${afterPick.error}`);
+  out(afterPick.utr, "saving the choice moves to the payment step", `error=${afterPick.error}`);
 
   const awaiting = await sql(
     `select payment_status, utr_number, purchase_ref from public.registrations where email = '${EMAIL_B}'`
@@ -425,9 +444,9 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
     "CONTINUE opens the wizard with ?resume=<row id>",
     resumedUrl.search
   );
-  out(resumed.pay, "…and lands on the step it stopped at (the QR)", `error=${resumed.error}`);
+  out(resumed.utr, "…and lands on the step it stopped at (payment)", `error=${resumed.error}`);
   out(
-    /PAYMENT QR/i.test(resumed.current),
+    /PAYMENT REFERENCE/i.test(resumed.current),
     "…with the progress track showing that step as current",
     `current="${resumed.current}"`
   );
@@ -437,19 +456,33 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   await page.waitForTimeout(2600);
   const afterReload = await state(page);
   out(
-    afterReload.pay,
+    afterReload.utr,
     "refreshing a ?resume= URL returns to the same step (state comes from the row)",
-    `details=${afterReload.details} pay=${afterReload.pay} error="${afterReload.error}"`
+    `details=${afterReload.details} utr=${afterReload.utr} error="${afterReload.error}"`
   );
 
-  /* ---- the details really were carried over ---- */
-  await page.click("#reg-pay-back");
+  /* ---- back walks the wizard backwards, and the details are still prefilled ----
+   * Payment goes back to CHOOSE EVENTS, not to details: that is the step the list
+   * says came before it. The old code jumped straight to details from the QR
+   * step, which only made sense when the QR was its own step. Walking back two
+   * times has to land on details with the row's values already in the form, or a
+   * participant correcting a typo retypes everything. */
+  await page.click("#reg-utr-back");
+  await page.waitForTimeout(700);
+  const backAtSelect = await state(page);
+  out(
+    backAtSelect.select,
+    "back from payment lands on the step before it, not on a QR screen that no longer exists",
+    `select=${backAtSelect.select} utr=${backAtSelect.utr}`
+  );
+
+  await page.click("#reg-select-back");
   await page.waitForTimeout(700);
   const backAtDetails = await state(page);
   out(
     backAtDetails.details && backAtDetails.name === "ZZ Register Probe",
-    "…and the details step is prefilled from the row, not empty",
-    `name="${backAtDetails.name}"`
+    "…and walking back to details still has the row's values, not an empty form",
+    `details=${backAtDetails.details} name="${backAtDetails.name}"`
   );
   await page.click("#reg-details-next");
   await page.waitForTimeout(1200);
@@ -469,9 +502,9 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
     `error="${afterRefill.error}"`
   );
   out(
-    afterRefill.select || afterRefill.pay,
+    afterRefill.select || afterRefill.utr,
     "…and the wizard moves forward instead",
-    `select=${afterRefill.select} pay=${afterRefill.pay}`
+    `select=${afterRefill.select} utr=${afterRefill.utr}`
   );
 
   if (afterRefill.select) await pickAndSave(page);
@@ -498,7 +531,10 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
 
   await page.goto(`${BASE}/register?event=free-fire`, { waitUntil: "domcontentloaded" });
   const ffEntry = await settle(page);
-  out(ffEntry.steps === 4, "FREE FIRE is a PAID four-step flow (it is not free)", `steps=${ffEntry.steps}`);
+  // Three, not four: details, payment reference, confirm. The QR used to be a
+  // step of its own and is now on the reference screen, so the count dropped by
+  // one everywhere. It is still a PAID flow - `paid` is what adds the step at all.
+  out(ffEntry.steps === 3, "FREE FIRE is a PAID three-step flow (it is not free)", `steps=${ffEntry.steps}`);
   const ffField = await page.locator('[data-event-field="free_fire_id"]').count();
   out(ffField === 1, "the Free Fire ID input is on the form", `inputs=${ffField}`);
 
@@ -527,7 +563,7 @@ await sql(`update public.bundle_catalogue set is_active = true where id = '${BUN
   await page.click("#reg-details-next");
   await page.waitForTimeout(1800);
   const ffAtPay = await state(page);
-  out(ffAtPay.pay, "with the ID filled in, the flow continues to payment", `error=${ffAtPay.error}`);
+  out(ffAtPay.utr, "with the ID filled in, the flow continues to payment", `error=${ffAtPay.error}`);
 
   await payAndSubmit(page, `4023458${stamp.slice(-6)}`);
   const ffDone = await state(page);
