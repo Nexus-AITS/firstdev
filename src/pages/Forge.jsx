@@ -5,11 +5,13 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import RealmHeader from "../components/realm/RealmHeader.jsx";
 import EventRow from "../components/realm/EventRow.jsx";
 import { realms } from "../data/realms.js";
-import { getEventsByRealm } from "../data/events.js";
+import { getEventViewsByRealm } from "../data/events.js";
+import useCatalogue from "../hooks/useCatalogue.js";
 
 export default function Forge() {
   const realm = realms.forge;
-  const list = getEventsByRealm("forge");
+  useCatalogue();
+  const list = getEventViewsByRealm("forge");
 
   return (
     <Page>

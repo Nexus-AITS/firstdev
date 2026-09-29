@@ -5,11 +5,13 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import RealmHeader from "../components/realm/RealmHeader.jsx";
 import ParadoxCard from "../components/realm/ParadoxCard.jsx";
 import { realms } from "../data/realms.js";
-import { getEventsByRealm } from "../data/events.js";
+import { getEventViewsByRealm } from "../data/events.js";
+import useCatalogue from "../hooks/useCatalogue.js";
 
 export default function Paradox() {
   const realm = realms.paradox;
-  const list = getEventsByRealm("paradox");
+  useCatalogue();
+  const list = getEventViewsByRealm("paradox");
 
   return (
     <Page>

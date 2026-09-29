@@ -43,8 +43,11 @@ import Select from "../components/ui/Select.jsx";
 import DateField from "../components/ui/DateField.jsx";
 import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import ContactManager from "../components/admin/ContactManager.jsx";
-import { bundles } from "../data/bundles.js";
-import { events } from "../data/events.js";
+// The `bundles` and `events` arrays are deliberately NOT imported here. This tab
+// used to build its price list from them, which meant an event created in the
+// Catalogue tab had no row to edit and a price for a deleted event was invisible.
+// The catalogue is the list now — see the note above loadCatalogueList.
+import { loadCatalogue } from "../data/catalogue.js";
 import { loadPricing, subscribePricing } from "../data/pricing.js";
 
 const SESSION_MINUTES = 60;
@@ -1387,10 +1390,12 @@ function StaffTab({
 /**
  * Edit the prices that the public site reads.
  *
- * The bundle/event shape stays in JS (bundles.js / events.js); only the number
- * lives here. Saving writes public.pricing, and a database trigger records the
- * change in the audit log with the operator's identity — so "who raised this
- * price and when" has an answer.
+ * The LIST is the catalogue, so it contains every event and bundle that exists —
+ * including the ones with no price yet, which are precisely the ones an operator
+ * needs to see. Saving calls staff_set_price, which checks the catalogue and
+ * derives the entry type server-side, and a database trigger records the change
+ * in the audit log with the operator's identity — so "who raised this price and
+ * when" has an answer.
  */
 function PricingTab({
   session,
@@ -1408,14 +1413,56 @@ function PricingTab({
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(null);
 
-  const catalogue = useMemo(
+  /* The list comes from the CATALOGUE, not from src/data.
+     This tab used to build its rows from the compiled-in `bundles` and `events`
+     arrays, which meant an event created in the Catalogue tab had no row to edit
+     here at all, and a price left behind by a deleted event was invisible. The
+     database is the only list that can be right, and public_catalogue already
+     returns the price joined onto the same object. */
+  const [catalogue, setCatalogue] = useState({ events: [], bundles: [] });
+  const [catalogueError, setCatalogueError] = useState(null);
+
+  const loadCatalogueList = useCallback(async () => {
+    const result = await loadPublicCatalogue();
+    if (result.ok) {
+      setCatalogue({ events: result.events ?? [], bundles: result.bundles ?? [] });
+      setCatalogueError(null);
+    } else {
+      setCatalogueError(result.error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCatalogueList();
+  }, [loadCatalogueList]);
+
+  /* Every catalogue item gets a row, INCLUDING the ones with no price yet. An
+     unpriced event is a thing an operator has to be able to fix, and a list that
+     only shows what is already priced can never show them. */
+  const entries = useMemo(
     () => [
-      ...bundles.map((b) => ({ kind: "bundle", ref_id: b.id, label: `${b.number} · ${b.name}`, price: Number(b.price) })),
-      ...events
-        .filter((e) => e.payment != null && e.payment !== "")
-        .map((e) => ({ kind: "event", ref_id: e.id, label: `${e.number} · ${e.title}`, price: e.payment })),
+      ...catalogue.bundles.map((b) => ({
+        kind: "bundle",
+        ref_id: b.id,
+        label: `${b.number} · ${b.name}`,
+        price: b.price ?? null,
+        note: "",
+      })),
+      ...catalogue.events.map((e) => ({
+        kind: "event",
+        ref_id: e.id,
+        label: `${e.number} · ${e.title}`,
+        price: e.price ?? null,
+        // The note has to say WHAT the number covers. "300" on a per-person event
+        // and "300" on a squad event are five times apart in real money, and the
+        // operator editing one without the other needs to see which they are on.
+        note:
+          e.payment_mode === "per_team"
+            ? `one squad leader pays this, for up to ${e.max_team_members ?? "?"} players`
+            : "each person pays this",
+      })),
     ],
-    []
+    [catalogue]
   );
 
   const liveFor = (kind, refId) => rows.find((p) => p.kind === kind && p.ref_id === refId);
@@ -1435,8 +1482,10 @@ function PricingTab({
     if (result.ok) {
       // Re-read public.pricing so the public site's cached prices and this
       // console's own list both reflect the change immediately. `force` is
-      // required because loadPricing() is otherwise a no-op once loaded.
+      // required because loadPricing() is otherwise a no-op once loaded. The
+      // catalogue is re-read too, because THAT is where the list now comes from.
       await loadPricing({ force: true });
+      await loadCatalogueList();
       setDrafts((d) => {
         const next = { ...d };
         delete next[key];
@@ -1445,7 +1494,9 @@ function PricingTab({
       setNotice({ kind: "ok", text: `${entry.label} is now ₹${price}. Change recorded in the audit log.` });
       reload();
     } else {
-      setNotice({ kind: "error", text: "That price could not be saved." });
+      // The RPC's own sentence — "There is no event X in the catalogue, so it
+      // cannot be priced" is far more use to an operator than a generic failure.
+      setNotice({ kind: "error", text: result.body?.error ?? "That price could not be saved." });
     }
   }
 
@@ -1469,14 +1520,21 @@ function PricingTab({
   return (
     <section>
       <p className="text-sm leading-relaxed text-ash">
-        These are the live prices the public site renders. Editing one takes effect on the next page
-        load — no rebuild, no redeploy. The values compiled into the site are used only if this
-        database is unreachable.
+        These are the live prices the public site renders, and the list is the catalogue itself —
+        every event and bundle that exists, so an item created in the Catalogue tab is priceable here
+        straight away and a price can never outlive the thing it was for. Editing one takes effect on
+        the next page load, with no rebuild and no redeploy.
       </p>
 
       {notice ? <div className="mt-4"><Banner kind={notice.kind}>{notice.text}</Banner></div> : null}
 
       {win.error ? <div className="mt-4"><Banner>Could not load prices. Try refreshing.</Banner></div> : null}
+
+      {catalogueError ? (
+        <div className="mt-4">
+          <Banner>Could not load the catalogue, so there is nothing to price. {catalogueError}</Banner>
+        </div>
+      ) : null}
 
       <Pager
         label="pricing"
@@ -1493,19 +1551,28 @@ function PricingTab({
         <div key={section.kind} className="mt-8">
           <h2 className="font-mono text-[11px] uppercase tracking-[0.35em] text-ash">{section.title}</h2>
           <ul className="mt-3 space-y-2">
-            {catalogue
+            {entries
               .filter((c) => c.kind === section.kind)
               .map((entry) => {
                 const key = `${entry.kind}:${entry.ref_id}`;
                 const live = liveFor(entry.kind, entry.ref_id);
                 const current = live ? live.price : entry.price;
+                // `?? ""` rather than String(current): an unpriced item must render
+                // an EMPTY box, because String(null) is the text "null" and that
+                // would look like a price of nothing.
+                const shown = drafts[key] ?? (current == null ? "" : String(current));
                 return (
                   <li key={key} className="flex flex-wrap items-center gap-3 border border-line bg-void-raised px-4 py-3">
                     <div className="min-w-[12rem] flex-1">
                       <p className="font-mono text-sm text-bone">{entry.label}</p>
                       <p className="mt-0.5 font-mono text-[11px] text-ash">
                         {entry.ref_id}
-                        {live ? ` · from database` : " · not set in the database yet"}
+                        {current == null
+                          ? " · NO PRICE SET YET"
+                          : live
+                            ? " · from database"
+                            : " · not set in the database yet"}
+                        {entry.note ? ` · ${entry.note}` : ""}
                       </p>
                     </div>
                     <label className="sr-only" htmlFor={`price-${key}`}>
@@ -1517,13 +1584,18 @@ function PricingTab({
                       min="0"
                       step="1"
                       inputMode="numeric"
-                      value={drafts[key] ?? String(current)}
+                      value={shown}
                       onChange={(e) => setDrafts((d) => ({ ...d, [key]: e.target.value }))}
                       className="w-28 border border-line bg-void px-3 py-2 font-mono text-sm text-bone outline-none focus:border-violet-bright"
                     />
                     <ActionButton
                       label="Save"
-                      disabled={busy === key || Number(drafts[key] ?? current) === current}
+                      disabled={
+                        busy === key ||
+                        !Number.isInteger(Number(shown)) ||
+                        Number(shown) < 0 ||
+                        Number(shown) === current
+                      }
                       onClick={() => save(entry)}
                     />
                   </li>

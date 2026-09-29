@@ -4,7 +4,8 @@ import SectionHeading from "../components/ui/SectionHeading.jsx";
 import CinematicButton from "../components/ui/CinematicButton.jsx";
 import RealmFX from "../components/fx/RealmFX.jsx";
 import BundleCard from "../components/bundled/BundleCard.jsx";
-import { bundleGroups } from "../data/bundles.js";
+import { bundleGroups, getBundleGroups } from "../data/bundles.js";
+import useCatalogue from "../hooks/useCatalogue.js";
 
 /**
  * BUNDLED — the eight payment bundles of the Nexus.
@@ -32,6 +33,25 @@ const STEPS = [
 ];
 
 export default function Bundled() {
+  // The bundle LIST is the database's, exactly as the prices are. Without this
+  // subscription a bundle retired or created in the console would not repaint.
+  useCatalogue();
+  // `null` = the database has not answered yet, so the compiled catalogue stands
+  // in until it does. `[]` = the database has answered and there is nothing
+  // published, which is a fact and gets an empty state rather than the eight
+  // hardcoded cards.
+  const live = getBundleGroups();
+  const groups = live ?? bundleGroups;
+  const count = groups.reduce((n, group) => n + group.bundles.length, 0);
+  // The cheapest published price, so the hero line is a fact about what is on
+  // sale rather than a number typed into a component.
+  const cheapest = groups
+    .flatMap((group) => group.bundles)
+    .reduce((min, bundle) => {
+      const p = bundle.price == null ? null : Number(bundle.price);
+      return p == null ? min : min == null ? p : Math.min(min, p);
+    }, null);
+
   return (
     <Page>
       <div className="relative min-h-svh overflow-hidden bg-void">
@@ -62,21 +82,31 @@ export default function Bundled() {
 
           <Reveal delay={0.5}>
             <p className="mx-auto mt-7 max-w-2xl text-sm leading-relaxed tracking-wide text-crystal/60">
-              Eight ways to pay for more than one event — bundle the Hackathon
-              with NEXUS REBUILDERS or NEXUS OFF-GRID, run a realm alone, and claim every
-              seat in the bundle at a single price.
+              {count === 0
+                ? "No bundles are on sale at the moment. Check back soon, or register for a single event."
+                : `${count === 1 ? "One way" : `${count} ways`} to pay for more than one event — bundle the Hackathon with NEXUS REBUILDERS or NEXUS OFF-GRID, run a realm alone, and claim every seat in the bundle at a single price.`}
             </p>
           </Reveal>
 
-          <Reveal delay={0.6}>
-            <p className="mt-6 text-[10px] font-medium uppercase tracking-[0.45em] text-gold/85 [text-shadow:0_0_18px_rgba(245,215,142,0.4)]">
-              From ₹249 · 8 bundles live
-            </p>
-          </Reveal>
+          {/* Both figures are read off the catalogue that is actually on sale.
+              They were hardcoded ("From ₹249 · 8 bundles live"), which meant a
+              master who retired every bundle still had the page advertising eight
+              of them at a price nobody was charging. */}
+          {cheapest == null ? null : (
+            <Reveal delay={0.6}>
+              <p className="mt-6 text-[10px] font-medium uppercase tracking-[0.45em] text-gold/85 [text-shadow:0_0_18px_rgba(245,215,142,0.4)]">
+                From ₹{cheapest} · {count} {count === 1 ? "bundle" : "bundles"} live
+              </p>
+            </Reveal>
+          )}
         </section>
 
         {/* the bundles */}
-        {bundleGroups.map((group) => (
+        {groups.map((group) =>
+          // A group heading with no cards under it is a lie about what is on
+          // sale, so an emptied group disappears entirely rather than printing
+          // "NEXUS OFF-GRID BUNDLED" above nothing.
+          group.bundles.length === 0 ? null : (
           <section
             key={group.id}
             className="relative z-10 mx-auto mt-16 max-w-[1680px] px-5 md:mt-24 md:px-10"
@@ -96,7 +126,8 @@ export default function Bundled() {
               ))}
             </div>
           </section>
-        ))}
+          )
+        )}
 
         {/* fine print */}
         <section

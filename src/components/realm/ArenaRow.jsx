@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
 import EventLogo from "../event/EventLogo.jsx";
+import Seats from "../event/Seats.jsx";
 
 /** THE ARENA — competitive HUD row: sigil, number, title, mode, status, view. */
 export default function ArenaRow({ event, index = 0 }) {
@@ -68,6 +69,7 @@ export default function ArenaRow({ event, index = 0 }) {
             >
               {event.status}
             </span>
+            <Seats event={event} className="mt-2 block" />
           </div>
 
           <div className="md:col-span-2 md:text-right">

@@ -5,11 +5,16 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import RealmHeader from "../components/realm/RealmHeader.jsx";
 import ArenaRow from "../components/realm/ArenaRow.jsx";
 import { realms } from "../data/realms.js";
-import { getEventsByRealm } from "../data/events.js";
+import { getEventViewsByRealm } from "../data/events.js";
+import useCatalogue from "../hooks/useCatalogue.js";
 
 export default function Arena() {
   const realm = realms.arena;
-  const list = getEventsByRealm("arena");
+  // One subscription for the page, so every row renders the live catalogue and
+  // the whole list repaints when it answers. See useEventView for the single
+  // component version.
+  useCatalogue();
+  const list = getEventViewsByRealm("arena");
 
   return (
     <Page>

@@ -13,10 +13,24 @@ export default function BundleCard({ bundle, index = 0 }) {
   // subscription the card would keep showing the JS constant compiled into the
   // bundle even after loadPricing() replaced it.
   usePricing();
-  // DB-first: the price a master set in the console, falling back to the JS
-  // constant only when the database has not answered. Never `bundle.price`
-  // directly — that bypasses public.pricing entirely.
-  const price = getBundlePrice(bundle.id);
+  // The price comes off the bundle object, which getBundleGroups() built from the
+  // catalogue row. It is read in a defined order so the DB is always the
+  // authority:
+  //
+  //   bundle.price !== undefined  the catalogue answered; that is the answer,
+  //                              INCLUDING null (no price set -> show a dash,
+  //                              because inventing a number is worse)
+  //   otherwise                   the database has not answered, so the pricing
+  //                              store answers, and the compiled constant is the
+  //                              last resort
+  //
+  // The `undefined` test is what makes that work: getBundleGroups() sets the key
+  // to null when there is genuinely no price, and a null must NOT fall through
+  // to a stale compiled value.
+  const price =
+    bundle.price !== undefined
+      ? bundle.price
+      : (getBundlePrice(bundle.id) ?? null);
 
   return (
     <Reveal delay={0.06 * (index % 3)} className="h-full">

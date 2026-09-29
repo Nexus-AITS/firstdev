@@ -167,5 +167,5 @@ values
     ('event', 'shutter-quest', 149),
     ('event', 'matrix', 149),
     ('event', 'pixel-resistance', 149),
-    ('event', 'free-fire', 149)
+    ('event', 'free-fire', 300)
 on conflict (kind, ref_id) do nothing;

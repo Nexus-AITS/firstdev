@@ -3,6 +3,7 @@ import { Route, Routes, useLocation, Navigate } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import useSmoothScroll from "./hooks/useSmoothScroll";
 import usePricing from "./hooks/usePricing.js";
+import { loadCatalogue } from "./data/catalogue.js";
 import { loadPricing } from "./data/pricing.js";
 import { AuthProvider } from "./context/AuthContext";
 import { TransitionProvider } from "./context/TransitionContext";
@@ -64,6 +65,9 @@ export default function App() {
      that subscribe produce exactly one request. */
   useEffect(() => {
     loadPricing();
+    /* The same story for the registration counters: they are the database's, not
+       the bundle's. One call, one response, every card repaints from it. */
+    loadCatalogue();
   }, []);
 
   return (

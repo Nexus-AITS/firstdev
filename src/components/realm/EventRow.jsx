@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatEventFee, formatEntryType, getEventFee } from "../../data/events.js";
+import Seats from "../event/Seats.jsx";
+import { formatEventFee, formatEntryType, getEventFee, getPaymentMode } from "../../data/events.js";
 import usePricing from "../../hooks/usePricing.js";
 
 function ExploreLink({ id }) {
@@ -71,8 +72,14 @@ export default function EventRow({ event, index = 0 }) {
           {fee != null ? (
             <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
               {formatEventFee(event.id)} · {formatEntryType(event)}
+              {/* Only where it changes what the number means. On a per-person
+                  event the mode is the default and saying so on every card is
+                  noise; on a squad event Rs 300 means something different. */}
+              {getPaymentMode(event) === "per_team" ? " · per team" : ""}
             </p>
           ) : null}
+
+          <Seats event={event} className="mt-3" />
 
           <div className="mt-6">
             <ExploreLink id={event.id} />

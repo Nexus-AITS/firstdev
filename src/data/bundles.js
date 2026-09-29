@@ -5,8 +5,9 @@
  * the buyer picks from at checkout ({ pick: "<realm>", count,
  * excludeHackathon? }). Components never hardcode bundle contents — edit here.
  */
-import { events, getEventById } from "./events.js";
+import { events, getEventById, getEventView } from "./events.js";
 import { realms } from "./realms.js";
+import { getLiveBundles, getLiveEventsByRealm } from "./catalogue.js";
 import { getPrice, registerFallbackPrice } from "./pricing.js";
 
 const HACKATHON_ID =
@@ -120,6 +121,67 @@ export function getBundleById(id) {
   return bundlesList.find((bundle) => bundle.id === id) ?? null;
 }
 
+/**
+ * The bundles the site should render right now, grouped as the page groups them.
+ *
+ * Same rule as getEventViewsByRealm, and for the same reason: the LIST is the
+ * operator's, not the bundle's. Before this, /bundled rendered `bundleGroups` —
+ * a compiled array — so a bundle the master had retired in the console kept
+ * appearing with its price, and a bundle they had just created never appeared at
+ * all. Both are the bug this fixes.
+ *
+ * `null` when the database has not answered (offline, or the first paint), so the
+ * caller can tell "not known yet" from "none published" and render the compiled
+ * catalogue for the first and an honest empty state for the second.
+ *
+ * Group headings come from the database too (kicker / title_lines), so renaming a
+ * section is a console edit. The grid CLASS is presentation and stays here.
+ */
+export function getBundleGroups() {
+  const live = getLiveBundles();
+  if (!live) return null;
+
+  // Preserve the compiled order of the groups, so a new group the database has
+  // not heard of still lands in a sensible place rather than at random.
+  const order = new Map(bundleGroups.map((group, i) => [group.id, i]));
+  const gridFor = new Map(bundleGroups.map((group) => [group.id, group.grid]));
+  const byGroup = new Map();
+
+  for (const row of live) {
+    const id = row.group_id ?? "nexus-forge";
+    if (!byGroup.has(id)) byGroup.set(id, []);
+    byGroup.get(id).push({
+      id: row.id,
+      number: row.number ?? "",
+      name: row.name ?? "",
+      // The live price, carried on the card's object. 0 is a real price (FREE),
+      // null means the database has no price for this bundle, which is a gap the
+      // operator must fix — never a number to invent.
+      price: row.price == null ? null : Number(row.price),
+      includes: Array.isArray(row.includes) ? row.includes : [],
+    });
+  }
+
+  return [...byGroup.entries()]
+    .sort((a, b) => (order.get(a[0]) ?? 99) - (order.get(b[0]) ?? 99))
+    .map(([id, list]) => {
+      // Headings: the database's if it gave any, the compiled copy otherwise.
+      const source = live.find((row) => (row.group_id ?? "nexus-forge") === id);
+      return {
+        id,
+        kicker:
+          source?.kicker ??
+          bundleGroups.find((g) => g.id === id)?.kicker ??
+          "Payment bundles",
+        titleLines: source?.title_lines?.length
+          ? source.title_lines
+          : bundleGroups.find((g) => g.id === id)?.titleLines ?? [],
+        grid: gridFor.get(id) ?? "md:grid-cols-2 lg:grid-cols-3",
+        bundles: list,
+      };
+    });
+}
+
 // Register the JS prices as fallbacks for the database values. The live price is
 // fetched at runtime from public.pricing (see pricing.js); these are only used
 // when the database has not answered, so a price is never *lost* by moving it
@@ -142,17 +204,25 @@ export function getBundlePrice(id) {
 
 /** The events a pick-pool can draw from (hackathon excluded when flagged). */
 export function getPickPool({ pick, excludeHackathon = false }) {
-  return events.filter(
-    (event) =>
-      event.realm === pick && (!excludeHackathon || event.id !== HACKATHON_ID)
-  );
+  // The pool is what a buyer can actually choose from, so it comes from the
+  // catalogue when the database has answered — an event retired in the console
+  // must not still be offered as a choice on a card.
+  const source = getLiveEventsByRealm(pick) ?? events;
+  return source
+    .map((event) => getEventView(event))
+    .filter(
+      (event) =>
+        event.realm === pick && (!excludeHackathon || event.id !== HACKATHON_ID)
+    );
 }
 
 /** Human label for one include line (cards, gateway chip, screen readers). */
 export function describeInclude(item) {
   if (item.event) {
-    const event = getEventById(item.event);
-    return event ? `${event.title} · ${event.category}` : item.event;
+    // Through the live view, so a title renamed in the console is what the card
+    // prints rather than the compiled one.
+    const event = getEventView(getEventById(item.event) ?? { id: item.event });
+    return event ? `${event.title} · ${event.category ?? ""}`.replace(/ · $/, "") : item.event;
   }
   const realm = realms[item.pick];
   const name = (realm?.name ?? item.pick).replace(/^THE /, "");

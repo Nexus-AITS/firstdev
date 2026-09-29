@@ -6,14 +6,19 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import EventLogo from "../components/event/EventLogo.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
+import Seats from "../components/event/Seats.jsx";
 import NotFound from "./NotFound.jsx";
-import { formatEventFee, getEventById, getEventFee, formatEntryType } from "../data/events.js";
+import { formatEventFee, getEventFee, formatEntryType, getPaymentMode } from "../data/events.js";
 import { realms } from "../data/realms.js";
+import useEventView from "../hooks/useEventView.js";
 import usePricing from "../hooks/usePricing.js";
 
 export default function EventDetail() {
   const { eventId } = useParams();
-  const event = getEventById(eventId);
+  // The live view, subscribed: a date or venue a master edited in the console
+  // reaches this page without a redeploy. getEventView falls back to the
+  // compiled-in data, so this is also the offline path.
+  const event = useEventView(eventId);
   // Repaint the billing line when the database answers. The fee is read through
   // getEventFee, so a price a master changed in the console is what shows here.
   usePricing();
@@ -136,18 +141,43 @@ export default function EventDetail() {
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
               Registration happens right here in the Nexus
             </p>
+            <div className="mt-4 flex justify-center">
+              <Seats event={event} />
+            </div>
             {/* `!= null`, not truthy: a fee of 0 must still render (as FREE). */}
             {getEventFee(event.id) != null ? (
-              <div className="mt-6 flex items-center justify-center gap-4">
-                <span aria-hidden className="h-px w-8 bg-gold/40" />
-                <p className="font-display text-[clamp(1.7rem,3.2vw,2.6rem)] font-medium text-gold [text-shadow:0_0_26px_rgba(245,215,142,0.45)]">
-                  {formatEventFee(event.id)}
-                </p>
-                <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/55">
-                  {formatEntryType(event)}
-                </span>
-                <span aria-hidden className="h-px w-8 bg-gold/40" />
+              <div className="mt-6 flex flex-col items-center gap-2">
+                <div className="flex items-center justify-center gap-4">
+                  <span aria-hidden className="h-px w-8 bg-gold/40" />
+                  <p className="font-display text-[clamp(1.7rem,3.2vw,2.6rem)] font-medium text-gold [text-shadow:0_0_26px_rgba(245,215,142,0.45)]">
+                    {formatEventFee(event.id)}
+                  </p>
+                  <span className="text-[10px] font-medium uppercase tracking-[0.4em] text-crystal/55">
+                    {formatEntryType(event)}
+                  </span>
+                  <span aria-hidden className="h-px w-8 bg-gold/40" />
+                </div>
+                {/* WHO pays is a different question from WHO may enter, and on a
+                    squad event it is the difference between Rs 300 per person and
+                    Rs 300 for five people. Saying only the cap would leave the
+                    amount ambiguous, so the mode is spelled out. */}
+                {getPaymentMode(event) === "per_team" ? (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-gold/80">
+                    one squad leader pays this for up to {event.maxTeamMembers} players
+                  </p>
+                ) : null}
               </div>
+            ) : null}
+
+            {/* Where a paid participant goes to form a team, when that happens off
+                this site. A COLUMN, not a constant: the destination changes, and
+                the console has to be able to change it. Blank for every event
+                that does not have an off-site team step. */}
+            {event.teamFormUrl ? (
+              <p className="mt-5 text-[11px] leading-relaxed tracking-wide text-crystal/55">
+                Every participant pays their own fee. Once your payment is approved, you will be
+                able to form a team and continue from there.
+              </p>
             ) : null}
             <div className="relative mt-8 inline-block">
               <div

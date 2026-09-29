@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import { formatEventFee, formatEntryType, getEventFee } from "../../data/events.js";
+import Seats from "../event/Seats.jsx";
+import { formatEventFee, formatEntryType, getEventFee, getPaymentMode } from "../../data/events.js";
 import usePricing from "../../hooks/usePricing.js";
 
 const SHIFTS = ["", "md:ml-[7%]", "md:ml-[13%]", "md:ml-[4%]", "md:ml-[10%]"];
@@ -64,8 +65,11 @@ export default function ParadoxCard({ event, index = 0 }) {
               {fee != null ? (
                 <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.34em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
                   {formatEventFee(event.id)} · {formatEntryType(event)}
+                  {getPaymentMode(event) === "per_team" ? " · per team" : ""}
                 </p>
               ) : null}
+
+              <Seats event={event} className="mt-4" />
 
               <Link
                 to={`/events/${event.id}`}

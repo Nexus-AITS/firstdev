@@ -654,28 +654,14 @@ export async function bundleSelectionErrors(bundleId, eventIds, token = null) {
  *  when the whole table arrived in one response; under pagination this would
  *  have inserted a duplicate price whenever the target row happened not to be on
  *  the page the operator was looking at. */
-export async function staffSetPrice({ kind, refId, price, isActive, token }) {
-  const existing = await staffFetch(
-    `pricing?select=id&kind=eq.${kind}&ref_id=eq.${refId}&limit=1`,
-    { staffToken: token }
-  );
-  const match = Array.isArray(existing.data) ? existing.data[0] : null;
-  if (match) {
-    const res = await staffFetch(`pricing?id=eq.${match.id}`, {
-      method: "PATCH",
-      body: { price, is_active: isActive ?? true },
-      staffToken: token,
-      headers: { Prefer: "return=representation" },
-    });
-    return { ok: res.ok, error: res.ok ? null : res.error };
-  }
-  const res = await staffFetch("pricing", {
-    method: "POST",
-    body: { kind, ref_id: refId, price, is_active: isActive ?? true },
-    staffToken: token,
-    headers: { Prefer: "return=representation" },
-  });
-  return { ok: res.ok, error: res.ok ? null : res.error };
+export async function staffSetPrice({ kind, refId, price, token }) {
+  /* One server call, and the server decides insert vs update.
+     This used to be a browser read-then-write — fetch the row, PATCH it if it was
+     on the page, POST a new one otherwise — which cost two round trips, raced with
+     a concurrent save, and let the browser name a ref_id that was not in the
+     catalogue at all. staff_set_price checks the catalogue, derives the entry type
+     and upserts on the natural key, so an orphan price is no longer expressible. */
+  return rpc("staff_set_price", { p_kind: kind, p_ref_id: refId, p_price: price }, token);
 }
 
 /* ---------- contacts ---------- */

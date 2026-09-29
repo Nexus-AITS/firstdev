@@ -1,22 +1,32 @@
 /**
- * Structured event data — single source of truth for every realm.
- * Add / edit events here; components never hardcode content.
+ * Structured event data — the SEED and the offline fallback.
+ *
+ * This array is no longer the authority for anything an operator can change.
+ * `getEventView()` below merges the live catalogue over it, and every page that
+ * renders an event goes through that, so a venue or a date changed in the admin
+ * console reaches the public site without a redeploy. What is left here is the
+ * two things the database genuinely does not hold: the long-form PROSE (about
+ * paragraphs, tagline) and the presentation (sigil, accent, logo), neither of
+ * which the console edits. scripts/gen-catalogue-seed.mjs generates the SQL seed
+ * from this file, so it stays the source of that too.
  *
  * linkKey maps to src/config/eventLinks.js
  * payment = entry fee in ₹ — 0 means an explicitly FREE entry. Never omit the
  * field: consumers guard on `event.payment != null`, so a missing value reads
- * as "fee unknown" and hides the price line instead of saying FREE.
- * entryType = "individual" or "team": who may enter this event. maxTeamMembers
- * is the cap and is REQUIRED when entryType is "team" and absent when it is
- * "individual" — the same rule the database enforces, so a value that is not
- * the authority is still never wrong.
+ * as "fee unknown" and hides the price line instead of saying FREE. It is a
+ * FALLBACK only; the live fee comes from public.pricing at runtime.
+ * entryType = "individual" or "team": who may enter. maxTeamMembers is the cap,
+ * required when entryType is "team" and absent when it is "individual".
+ * paymentMode = "per_person" (everyone pays their own fee, any team is formed
+ * elsewhere afterwards) or "per_team" (one registration covers a squad and one
+ * leader pays once for it).
+ * teamFormUrl = where a paid participant goes to form a team off-site. Empty
+ * means no such step. It is data rather than a constant so changing the
+ * destination is a console edit, not a release.
  * teamSize is the free-text line the site prints ("2 — 5 MEMBERS"). It is
  * editorial copy; nothing reads it as a rule.
- *
- * The `payment` below is a FALLBACK. The live entry fee comes from
- * public.pricing at runtime (see pricing.js / getEventFee), so changing a fee is
- * a console action rather than a code change and redeploy.
  */
+import { getLiveEvent, getLiveEventsByRealm } from "./catalogue.js";
 import { getPrice, registerFallbackPrice } from "./pricing.js";
 
 export const events = [
@@ -255,9 +265,14 @@ export const events = [
     date: "OCT 5 — 6, 2026 · AFTER COLLEGE HOURS",
     venue: "THE ARENA — MAIN STAGE",
     teamSize: "SQUAD OF 4",
-    payment: 149,
+    payment: 300,
     entryType: "team",
-    maxTeamMembers: 4,
+    maxTeamMembers: 5,
+    // The one event where payment is NOT per person. A squad pays once, the
+    // leader pays it for everyone, and one registration covers the whole squad —
+    // so the fee below is the squad's total, not a per-head rate. Every other
+    // event leaves this unset and reads as per_person.
+    paymentMode: "per_team",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "squad",
@@ -274,12 +289,16 @@ export const events = [
     // blank one is a participant who cannot be entered into the lobby. Enforced
     // in the form here and, as the authority, by migration …011 — a client-side
     // rule alone would be bypassed by anyone posting to the REST API directly.
+    //
+    // ONE ID, not one per squad member. paymentMode is per_team, so a single
+    // registration represents the whole squad, and this is the leader's ID —
+    // which is exactly how the squad is identified and entered into the lobby.
     fields: [
       {
         name: "free_fire_id",
-        label: "Free Fire ID",
+        label: "Squad leader's Free Fire ID",
         placeholder: "e.g. 2831945712",
-        help: "Open Free Fire → your profile → the number under your name. It is checked at the match.",
+        help: "One per squad, not per player: the leader registers and pays for the whole squad, and this is the ID checked at the match. Open Free Fire → your profile → the number under your name.",
         maxLength: 32,
       },
     ],
@@ -317,6 +336,40 @@ export const ENTRY_TYPES = [
   { id: "individual", label: "Individual" },
   { id: "team", label: "Team" },
 ];
+
+/** Who pays, for a select and for a value check. */
+export const PAYMENT_MODES = [
+  { id: "per_person", label: "Each person pays" },
+  { id: "per_team", label: "One leader pays for the squad" },
+];
+
+/**
+ * How an event's entry is paid for, defaulted to "per_person".
+ *
+ * Mirrors getEntryType: every event pays per person unless it says otherwise,
+ * and per person is both the rule and the safe default — a wrong default here
+ * would under-charge every participant on an event that forgot to declare.
+ * A per_team event is one registration covering a squad, paid once by a leader.
+ */
+export function getPaymentMode(event) {
+  return event?.paymentMode === "per_team" ? "per_team" : "per_person";
+}
+
+/**
+ * Human label for who pays, for the price line beside a fee.
+ *
+ *   per_person -> "PER PERSON"   (each participant pays this)
+ *   per_team   -> "PER TEAM"     (one leader pays this for up to N)
+ *
+ * Only shown when it is worth saying. On a per-person team event the detail
+ * that matters is the cap, not the mode, and a label on every card would be
+ * noise — so this returns "" unless the event is per_team or is a team with a
+ * cap, and the caller decides where to put it.
+ */
+export function formatPaymentMode(event) {
+  if (getPaymentMode(event) === "per_team") return "PER TEAM";
+  return "";
+}
 
 /**
  * An event's entry type, defaulted to "individual".
@@ -363,27 +416,185 @@ export function formatFee(payment) {
 // Register the JS fees as fallbacks for the database prices (see pricing.js).
 // The live value comes from public.pricing at runtime, so changing an event fee
 // is a console action rather than a code change.
+//
+// Keyed by the event's OWN entry type, not a default. A team event's fallback has
+// to sit under the 'team' key or the store would answer with nothing for it and
+// the card would render "—" for a price that plainly exists.
 events.forEach((event) => {
   if (event.payment != null && event.payment !== "") {
-    registerFallbackPrice("event", event.id, event.payment);
+    registerFallbackPrice("event", event.id, event.payment, getEntryType(event));
   }
 });
 
 /**
- * The live fee for an event, preferring the database over the JS constant.
- * Returns null when the event declares no fee at all, which formatFee renders
- * as "—" (a data gap) rather than "FREE".
+ * The live fee for an event.
+ *
+ * Read in this order, and the order is the point:
+ *
+ *   1. the catalogue row's own price, because public_catalogue is the same row
+ *      the console edits, so this is the live authority;
+ *   2. the pricing store, which is the same number reached a different way and
+ *      is the fallback if the catalogue call failed;
+ *   3. the compiled-in `payment`, for a cold first paint with no network.
+ *
+ * The subtlety is step 1 returning null. getEventView only sets `livePrice` from
+ * a real value, so `livePrice != null` is not enough to tell "the database says
+ * nothing" from "the database has not answered". Those must differ:
+ *
+ *   DB answered, no price   -> null, so the card renders "—" and registration is
+ *                             refused. Falling through to the compiled number here
+ *                             is how a retired price keeps being charged: the
+ *                             operator deleted the price, the page carried on
+ *                             quoting the old one, and the two disagreed forever.
+ *   DB has NOT answered     -> the store, then the compiled constant.
+ *
+ * getLiveEvent is what tells the two apart, so the check is explicit rather than
+ * inferred from the merged shape.
+ *
+ * Returns null when the event declares no fee at all, which formatFee renders as
+ * "—" (a data gap) rather than "FREE" — a missing price is not a free seat.
  */
 export function getEventFee(id) {
   const event = getEventById(id);
-  if (!event || event.payment == null || event.payment === "") return null;
-  const live = getPrice("event", id);
-  return live == null ? event.payment : live;
+  if (!event) return null;
+  const view = getEventView(event);
+  if (view.livePrice != null) return Number(view.livePrice);
+  // The catalogue answered for this event and still has no price: that is the
+  // answer, and it is not the compiled one.
+  if (getLiveEvent(id)) return null;
+  if (view.payment == null || view.payment === "") return null;
+  const live = getPrice("event", id, getEntryType(view));
+  return live == null ? view.payment : live;
 }
 
 /** formatFee, but DB-first. The call sites that render a live price use this. */
 export function formatEventFee(id) {
   return formatFee(getEventFee(id));
+}
+
+/* ------------------------------------------------------------------ */
+/* the live view                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Column -> the JS field it overrides. Explicit on purpose.
+ *
+ * A blind spread of the catalogue row over the event would be shorter and
+ * wrong: it would overwrite `id`, and it would map snake_case keys onto a
+ * camelCase object so every call site would need to know which shape it is
+ * holding. This table is the whole contract between the two, so adding a column
+ * to public_catalogue is a one-line change here rather than a hunt through the
+ * components.
+ *
+ * `null` in the third column means the field is AUTHORITATIVE even when empty,
+ * and is listed separately below rather than inferred. See BLANKABLE.
+ */
+const LIVE_OVERRIDES = [
+  ["title", "title"],
+  ["number", "number"],
+  ["category", "category"],
+  ["mode", "mode"],
+  ["tagline", "tagline"],
+  ["event_date", "date"],
+  ["venue", "venue"],
+  ["team_size", "teamSize"],
+  ["entry_type", "entryType"],
+  ["max_team_members", "maxTeamMembers"],
+  ["payment_mode", "paymentMode"],
+  ["status", "status"],
+  ["price", "livePrice"],
+];
+
+/**
+ * Fields where an empty database value is the operator's DECISION, not a gap.
+ *
+ * These are the two an operator legitimately clears:
+ *
+ *   max_registrations  null is the documented "no limit" state, and is how
+ *                      every event starts. Treating it as missing would mean an
+ *                      uncapped event kept a hardcoded cap forever.
+ *   team_form_url      null means "this event has no team-formation step". A
+ *                      compiled fallback would re-add a link to a destination
+ *                      somebody deliberately removed.
+ *
+ * Everything in LIVE_OVERRIDES still refuses a blank, because there a blank
+ * means the row predates the column (a console edit on an older schema) and the
+ * compiled copy is a better answer than an empty venue.
+ */
+const BLANKABLE = new Set(["maxRegistrations", "teamFormUrl"]);
+
+/**
+ * The event as the site should render it RIGHT NOW: the compiled-in shape with
+ * the live catalogue laid over it.
+ *
+ * This is the answer to "the backend must reflect the frontend". Before it, every
+ * event page read this file directly, so an operator editing a date or a venue in
+ * the console changed the database and not the page. Now the console and the page
+ * read the same row.
+ *
+ * Two rules, and the difference between them is the whole point:
+ *
+ *   1. NO LIVE ROW  -> the compiled event, unchanged. That is the offline path
+ *      and the cold first paint, and it is the only time a hardcoded value is
+ *      allowed to answer.
+ *   2. LIVE ROW     -> the database wins, including when it says nothing. A null
+ *      in BLANKABLE overwrites the compiled value rather than deferring to it.
+ *
+ * `livePrice` is kept SEPARATE from `payment`. `payment` is the offline fallback
+ * and is what the pricing store was seeded with; the live figure is the
+ * database's, and getEventFee decides which to show. Overwriting payment here
+ * would make the fallback depend on a network call.
+ */
+export function getEventView(eventOrId) {
+  const base = typeof eventOrId === "string" ? getEventById(eventOrId) : eventOrId;
+  if (!base) return null;
+  const live = getLiveEvent(base.id);
+  if (!live) return base;
+
+  const out = { ...base };
+  for (const [column, field] of LIVE_OVERRIDES) {
+    const value = live[column];
+    // `!= null && !== ""` rather than a truthiness test: 0 is a real price (a
+    // deliberately free event) and must win over the fallback.
+    if (value != null && value !== "") out[field] = value;
+  }
+  // Authoritative even when null — see BLANKABLE.
+  for (const [column, field] of [
+    ["max_registrations", "maxRegistrations"],
+    ["team_form_url", "teamFormUrl"],
+  ]) {
+    if (BLANKABLE.has(field)) out[field] = live[column] ?? null;
+  }
+  out.registeredCount = Number.isInteger(live.registered_count) ? live.registered_count : null;
+  return out;
+}
+
+/**
+ * A whole realm's events, live, in the database's order.
+ *
+ * The three realm pages render this, so the list itself has to come from the
+ * catalogue rather than from the compiled array. Two things follow from that,
+ * and both are the requirement rather than a nicety:
+ *
+ *   * an event created in the console APPEARS, because it is a row the database
+ *     returned and the compiled array has never heard of it;
+ *   * an event RETIRED in the console DISAPPEARS, because a static list would
+ *     otherwise keep selling a withdrawn event forever.
+ *
+ * The compiled array is still the fallback for the two cases where the database
+ * has not answered: offline, and the very first paint. getEventView is applied
+ * on top either way, so a row that is live in both places still shows the live
+ * values.
+ */
+export function getEventViewsByRealm(realmId) {
+  const liveList = getLiveEventsByRealm(realmId);
+  if (!liveList) return getEventsByRealm(realmId).map((event) => getEventView(event));
+
+  // A DB-only event has no compiled prose (the `about` paragraphs and sigil live
+  // in JS), so it is built from its own row and simply carries none. Rendering
+  // the title, price, date and venue is the point; the long copy can wait for an
+  // operator to add it.
+  return liveList.map((row) => getEventView(getEventById(row.id) ?? row));
 }
 
 export default events;

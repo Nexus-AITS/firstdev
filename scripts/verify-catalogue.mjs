@@ -205,11 +205,44 @@ if (!token) {
 
 const counts = await sql(`
   select (select count(*) from public.event_catalogue where is_active) as events,
-         (select count(*) from public.bundle_catalogue where is_active) as bundles,
+         (select count(*) from public.bundle_catalogue) as bundles,
          (select count(*) from public.bundle_includes) as includes`);
 out(counts[0].events === 11, "eleven active events", `n=${counts[0].events}`);
-out(counts[0].bundles === 8, "eight active bundles", `n=${counts[0].bundles}`);
+// The bundle count, and the include count, are asserted over the WHOLE table
+// rather than over the published rows. How many bundles a master has chosen to
+// publish is a business decision that changes between seasons, and a test that
+// fails when they withdraw one is a test that pressures them to keep selling
+// something. What must always hold is that the seeded catalogue is intact and
+// no line was lost or doubled - which is the invariant this file exists to
+// defend, and the one the ...018 repair was written against.
+out(counts[0].bundles === 8, "eight bundles in the catalogue", `n=${counts[0].bundles}`);
 out(counts[0].includes === 15, "fifteen include lines", `n=${counts[0].includes}`);
+
+// The ...018 bug: a one-based insert left position 0 free, the seed filled it,
+// and every bundle silently gained a duplicate line. Asserted over ALL bundles
+// because a retired bundle is exactly where this hides - it is not on the
+// public site, so nobody notices the card printing the same event twice.
+const gaps = await sql(`
+  select bi.bundle_id, count(*) as n, coalesce(max(bi.position), -1) as hi
+    from public.bundle_includes bi
+   group by bi.bundle_id
+  having coalesce(max(bi.position), -1) <> count(*) - 1`);
+out(
+  gaps.length === 0,
+  "every bundle's include lines are numbered 0..n-1 with no gap",
+  gaps.length ? gaps.map((g) => `${g.bundle_id} (n=${g.n}, max=${g.hi})`).join(", ") : "no gaps"
+);
+
+const dupes = await sql(`
+  select bundle_id, event_id, pick_realm, pick_count, count(*) as n
+    from public.bundle_includes
+   group by bundle_id, event_id, pick_realm, pick_count
+  having count(*) > 1`);
+out(
+  dupes.length === 0,
+  "no bundle lists the same seat or pool twice",
+  dupes.length ? dupes.map((d) => d.bundle_id).join(", ") : "no duplicates"
+);
 
 const keys = await sql(`
   select count(*) as n, count(distinct content_key) as d
@@ -262,6 +295,90 @@ out(
     : "no disagreement"
 );
 
+/* ---------- 1c. nothing is priced that the catalogue does not contain ---------- */
+
+// The catalogue is the only thing that can be priced, so a price row naming
+// anything else is unreachable, unreferenced and can only ever look real to
+// somebody reading the table. Migration ...015 deletes these and the trigger
+// prevents new ones; this proves the cleanup held rather than assuming it did.
+const orphans = await sql(`
+  select p.kind || ':' || p.ref_id as bad
+    from public.pricing p
+   where (p.kind = 'event'  and not exists (
+            select 1 from public.event_catalogue ec where ec.id = p.ref_id))
+      or (p.kind = 'bundle' and not exists (
+            select 1 from public.bundle_catalogue bc where bc.id = p.ref_id))`);
+out(
+  orphans.length === 0,
+  "no price names an event or bundle the catalogue does not contain",
+  orphans.length ? orphans.map((r) => r.bad).join(", ") : "none"
+);
+
+// A price's variant has to be the one its event actually offers. The trigger
+// enforces this on write, but a mismatch here means the row was written by
+// something that is not the trigger, which is worth knowing about.
+const mismatched = await sql(`
+  select p.ref_id, p.entry_type, ec.entry_type as should_be
+    from public.pricing p
+    join public.event_catalogue ec on ec.id = p.ref_id
+   where p.kind = 'event' and p.entry_type is distinct from ec.entry_type`);
+out(
+  mismatched.length === 0,
+  "every event price is stored at the entry type that event offers",
+  mismatched.length
+    ? mismatched.map((r) => `${r.ref_id}: ${r.entry_type} vs ${r.should_be}`).join("; ")
+    : "no disagreement"
+);
+
+// An unpriced event is the live money bug: registration_set_events sums whatever
+// price rows it finds, so before ...015 an event with no row handed out a free
+// seat. Now the writer refuses it, and this asserts the refusal is never needed
+// on the real catalogue.
+const unpriced = await sql(`
+  select ec.id
+    from public.event_catalogue ec
+   where ec.is_active
+     and not exists (select 1 from public.pricing p
+                      where p.kind = 'event' and p.ref_id = ec.id
+                        and p.entry_type = ec.entry_type and p.is_active)`);
+out(
+  unpriced.length === 0,
+  "every active event has an active price, so none can be registered for free",
+  unpriced.length ? unpriced.map((r) => r.id).join(", ") : "all priced"
+);
+
+/* ---------- 1d. who pays is stated, and a squad price has a squad size ---------- */
+
+// Three states, all real: a per-person event, a team event where each participant
+// pays, and a squad event where one leader pays for everyone. The third is only
+// meaningful with a cap, because "Rs 300 for the squad" is a discount of unknown
+// size without one.
+const pay = await sql(`
+  select ec.id, ec.entry_type, ec.payment_mode, ec.max_team_members
+    from public.event_catalogue ec
+   where ec.is_active
+     and ( ec.payment_mode not in ('per_person', 'per_team')
+        or (ec.payment_mode = 'per_team' and ec.max_team_members is null)
+        or (ec.payment_mode = 'per_team' and ec.max_team_members < 1) )`);
+out(
+  pay.length === 0,
+  "every event states who pays, and a per-squad price always has a squad size",
+  pay.length
+    ? pay.map((r) => `${r.id} (${r.payment_mode}, cap ${r.max_team_members})`).join("; ")
+    : "every event is well formed"
+);
+
+// The esports exception has to actually BE the exception, or the backfill that
+// created it did nothing and the rule is being enforced against nothing.
+const modes = await sql(`
+  select ec.realm, ec.payment_mode, count(*)::int as n
+    from public.event_catalogue ec where ec.is_active
+   group by ec.realm, ec.payment_mode order by ec.realm, ec.payment_mode`);
+console.log(
+  "    payment modes: " +
+    modes.map((m) => `${m.realm}/${m.payment_mode}=${m.n}`).join(", ")
+);
+
 /* ---------- 2. the pricing MODEL: bundles must undercut their parts ------ */
 
 // The product strategy is that a bundle is cheaper than assembling the same
@@ -296,9 +413,13 @@ const pricing = await sql(`
     from public.bundle_catalogue b
     join public.pricing p on p.kind = 'bundle' and p.ref_id = b.id and p.is_active
     left join lines l on l.bundle_id = b.id
-   where b.is_active
    group by b.id, p.price`);
 
+// Asserted over every bundle, published or not. Withdrawing a bundle is a
+// pricing decision, not a data-integrity one, and a bundle sitting retired with
+// a price above its parts is not something a participant can be charged for -
+// it is simply next season's starting point. Checking the whole catalogue means
+// the day a master re-publishes one, the number is already known to be sane.
 const notCheaper = pricing.filter((r) => r.cheapest_parts <= r.bundle_price);
 out(
   pricing.length === 8 && notCheaper.length === 0,
@@ -621,6 +742,13 @@ try {
   // which a deliberately retired seeded bundle satisfies — so it came silently
   // back to life and reappeared on the public site.
   const victim = "bundled-349";
+  // Remember what this bundle was BEFORE the test touched it, and put it back to
+  // exactly that. The old version hardcoded `set is_active = true`, which meant
+  // running the test silently republished a bundle a master had deliberately
+  // withdrawn - the test was changing the thing it exists to protect.
+  const original = await sql(
+    `select is_active from public.bundle_catalogue where id = '${victim}'`
+  );
   await sql(`update public.bundle_catalogue set is_active = false where id = '${victim}'`);
   const before = await sql(`select is_active from public.bundle_catalogue where id = '${victim}'`);
   out(before[0].is_active === false, "a seeded bundle is retired for the re-run test");
@@ -635,6 +763,15 @@ try {
     `${victim} is_active=${after[0].is_active}`
   );
 
+  // The seed must be a NO-OP on a catalogue that is already correct, whatever
+  // that catalogue happens to contain. Asserted as a before/after comparison
+  // rather than as a hardcoded "seven", because the number of published bundles
+  // is a business decision: the old form of this check passed only while eight
+  // bundles were on sale and would have failed the moment a master withdrew one,
+  // which is precisely the wrong thing for a seed test to police.
+  const publishedBefore = await sql(`
+    select count(*) as n from public.bundle_catalogue where is_active`);
+
   const afterCounts = await sql(`
     select (select count(*) from public.bundle_catalogue where is_active) as bundles,
            -- Scoped to the seeded bundles on purpose. The probe bundle above is
@@ -643,9 +780,9 @@ try {
            (select count(*) from public.bundle_includes
              where bundle_id not like '${PROBE}%') as includes`);
   out(
-    afterCounts[0].bundles === 7,
-    "the re-run left the retired bundle out and activated nothing else",
-    `${afterCounts[0].bundles} active, ${afterCounts[0].includes} includes`
+    afterCounts[0].bundles === publishedBefore[0].n,
+    "re-running the seed published nothing and retired nothing",
+    `${publishedBefore[0].n} active before, ${afterCounts[0].bundles} after`
   );
   out(
     afterCounts[0].includes === 15,
@@ -653,8 +790,26 @@ try {
     `n=${afterCounts[0].includes}`
   );
 
-  // Put it back, or the catalogue is one bundle short for whoever comes next.
-  await sql(`update public.bundle_catalogue set is_active = true where id = '${victim}'`);
+  // The include lines the seed would have added must not have landed either.
+  // This is the direct regression test for the ...018 off-by-one: a one-based
+  // upsert leaves position 0 free, and the seed's `on conflict do nothing` fills
+  // it - duplicating a line instead of restoring the missing one.
+  const afterGaps = await sql(`
+    select bi.bundle_id, count(*) as n, coalesce(max(bi.position), -1) as hi
+      from public.bundle_includes bi
+     where bi.bundle_id not like '${PROBE}%'
+     group by bi.bundle_id
+    having coalesce(max(bi.position), -1) <> count(*) - 1`);
+  out(
+    afterGaps.length === 0,
+    "re-running the seed left every bundle numbered 0..n-1",
+    afterGaps.length ? afterGaps.map((g) => g.bundle_id).join(", ") : "no gaps"
+  );
+
+  // Put it back exactly as it was, so the test leaves no trace either way.
+  await sql(
+    `update public.bundle_catalogue set is_active = ${original[0].is_active} where id = '${victim}'`
+  );
 } finally {
   await cleanup();
   await sql(`delete from public.staff_users where username like 'zz-coord-%'`);

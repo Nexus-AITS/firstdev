@@ -29,8 +29,17 @@ import { staffFetch } from "./staff.js";
 /** Bundles and events keep their fallback price in JS (see bundles.js / events.js). */
 const FALLBACK = new Map();
 
-function key(kind, refId) {
-  return `${kind}:${refId}`;
+/**
+ * The store key, which now carries the entry type.
+ *
+ * An event's price belongs to a way of entering it, so `event:free-fire` is no
+ * longer a key that can be right - the same event is priced as a team, and a key
+ * that ignored that would let the solo rate answer for the team rate. Bundles pin
+ * the sentinel 'individual' (see chk_pricing_entry_type), so the default keeps
+ * every bundle call site working exactly as it did.
+ */
+function key(kind, refId, entryType = "individual") {
+  return `${kind}:${refId}:${entryType}`;
 }
 
 let prices = new Map();
@@ -45,9 +54,9 @@ const listeners = new Set();
  * Register a JS fallback. Called by bundles.js / events.js at module load so the
  * fallback values live next to the data they describe instead of in a table here.
  */
-export function registerFallbackPrice(kind, refId, price) {
+export function registerFallbackPrice(kind, refId, price, entryType = "individual") {
   const n = Number(price);
-  if (Number.isFinite(n)) FALLBACK.set(key(kind, refId), n);
+  if (Number.isFinite(n)) FALLBACK.set(key(kind, refId, entryType), n);
 }
 
 /**
@@ -57,16 +66,16 @@ export function registerFallbackPrice(kind, refId, price) {
  * has not answered and there is no value to render. Rendering a wrong price is
  * worse than rendering none.
  */
-export function getPrice(kind, refId) {
-  const entry = prices.get(key(kind, refId));
+export function getPrice(kind, refId, entryType = "individual") {
+  const entry = prices.get(key(kind, refId, entryType));
   if (entry) return entry.price;
-  const fb = FALLBACK.get(key(kind, refId));
+  const fb = FALLBACK.get(key(kind, refId, entryType));
   return fb === undefined ? null : fb;
 }
 
 /** True when the value came from the database rather than the JS fallback. */
-export function isLivePrice(kind, refId) {
-  return prices.has(key(kind, refId));
+export function isLivePrice(kind, refId, entryType = "individual") {
+  return prices.has(key(kind, refId, entryType));
 }
 
 export const pricingLoaded = () => loaded;
@@ -106,9 +115,10 @@ export async function loadPricing({ force = false } = {}) {
 
   inFlight = (async () => {
     try {
-      const res = await staffFetch("pricing?select=kind,ref_id,price,is_active", {
-        staffToken: null,
-      });
+      const res = await staffFetch(
+        "pricing?select=kind,ref_id,entry_type,price,is_active",
+        { staffToken: null }
+      );
       if (res.ok && Array.isArray(res.data)) {
         const next = new Map();
         for (const row of res.data) {
@@ -116,7 +126,9 @@ export async function loadPricing({ force = false } = {}) {
           // instead of a price someone deliberately retired.
           if (row.is_active === false) continue;
           const n = Number(row.price);
-          if (Number.isFinite(n)) next.set(key(row.kind, row.ref_id), { price: n });
+          if (Number.isFinite(n)) {
+            next.set(key(row.kind, row.ref_id, row.entry_type ?? "individual"), { price: n });
+          }
         }
         prices = next;
       }
@@ -138,8 +150,8 @@ export async function loadPricing({ force = false } = {}) {
 }
 
 /** `₹349` / `FREE`, matching events.js formatFee so callers render one shape. */
-export function formatPrice(kind, refId) {
-  const p = getPrice(kind, refId);
+export function formatPrice(kind, refId, entryType = "individual") {
+  const p = getPrice(kind, refId, entryType);
   if (p == null) return "—";
   return p > 0 ? `₹${p}` : "FREE";
 }

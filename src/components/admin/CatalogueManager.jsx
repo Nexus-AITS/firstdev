@@ -15,7 +15,7 @@
  * code is not, and the wrapper functions already translate the common cases.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ENTRY_TYPES } from "../../data/events.js";
+import { ENTRY_TYPES, PAYMENT_MODES } from "../../data/events.js";
 import {
   loadPublicCatalogue,
   staffRetireBundle,
@@ -48,6 +48,12 @@ const emptyEvent = {
   team_size: "",
   entry_type: "individual",
   max_team_members: "",
+  // Blank means "no limit", which is the state every event starts in. Sending
+  // null (not "") is what the RPC reads as unlimited.
+  max_registrations: "",
+  price: "",
+  payment_mode: "per_person",
+  team_form_url: "",
   status: "REGISTRATION OPEN",
   is_active: true,
 };
@@ -69,6 +75,14 @@ function toEventForm(row) {
     // never be handed a value it has no option for.
     entry_type: row.entry_type === "team" ? "team" : "individual",
     max_team_members: row.max_team_members ?? "",
+    max_registrations: row.max_registrations ?? "",
+    payment_mode: row.payment_mode === "per_team" ? "per_team" : "per_person",
+    team_form_url: row.team_form_url ?? "",
+    // The price lives in public.pricing, not on the event row, so it arrives on
+    // the catalogue object as `price` (public_catalogue joins it on). Blank when
+    // the database has no price for this event, which is a gap to fix rather than
+    // a zero to show.
+    price: row.price ?? "",
     status: row.status ?? "REGISTRATION OPEN",
     is_active: row.is_active !== false,
   };
@@ -82,10 +96,19 @@ function toEventForm(row) {
  * one sentence rather than two that can drift.
  */
 function entryLabel(row) {
-  if (row.entry_type !== "team") return "INDIVIDUAL";
-  return row.max_team_members == null
-    ? "TEAM · NO CAP"
-    : `TEAM · MAX ${row.max_team_members}`;
+  const type =
+    row.entry_type !== "team"
+      ? "INDIVIDUAL"
+      : `TEAM · MAX ${row.max_team_members ?? "?"}`;
+  // A squad's registration limit counts SQUADS and its fee covers a whole squad,
+  // so the list has to say which it is showing or the number is unreadable.
+  const perTeam = row.payment_mode === "per_team";
+  const seats =
+    row.max_registrations == null
+      ? "no limit"
+      : `${row.registered_count ?? 0}/${row.max_registrations}${perTeam ? " squads" : ""}`;
+  const who = perTeam ? "squad pays" : "per person";
+  return `${type} · ${who} · ${seats} · ${row.price == null ? "NO PRICE" : `₹${row.price}`}`;
 }
 
 function toBundleForm(row) {
@@ -120,12 +143,15 @@ function EventEditor({ events, token, onSaved, onError }) {
 
   // Flipping to Individual clears the cap rather than leaving a number behind a
   // field that is no longer on screen — it would otherwise go back to the server
-  // as a value the operator cannot see and did not intend.
+  // as a value the operator cannot see and did not intend. It also drops
+  // per_team payment, because a squad price with no squad size is refused by the
+  // RPC, and a form that can reach an unsaveable state is a trap.
   const setEntryType = (e) =>
     setForm((f) => ({
       ...f,
       entry_type: e.target.value,
       max_team_members: e.target.value === "team" ? f.max_team_members : "",
+      payment_mode: e.target.value === "team" ? f.payment_mode : "per_person",
     }));
 
   function edit(row) {
@@ -159,6 +185,17 @@ function EventEditor({ events, token, onSaved, onError }) {
           form.entry_type === "team" && form.max_team_members !== ""
             ? Number(form.max_team_members)
             : null,
+        // null is "no limit" and is checked as a cap, not as a number. Zero is a
+        // number, and the RPC refuses it — a capped-at-zero event is not the same
+        // thing as an uncapped one and must not look like it in the form.
+        max_registrations:
+          form.max_registrations === "" ? null : Number(form.max_registrations),
+        // A blank amount leaves the existing price alone rather than clearing it.
+        // Clearing a price is done in the Pricing tab, where "no price" is
+        // something an operator can see and choose.
+        price: form.price === "" ? null : Number(form.price),
+        payment_mode: form.payment_mode,
+        team_form_url: form.team_form_url.trim() === "" ? null : form.team_form_url.trim(),
         status: form.status.trim(),
         is_active: form.is_active,
       },
@@ -299,6 +336,142 @@ function EventEditor({ events, token, onSaved, onError }) {
               />
             </div>
           ) : null}
+        </div>
+        {/* These four had no inputs until now. The form read them, sent them on
+            save, and blanked them — the RPC saw an empty string for a field the
+            operator could not see, which is the worst kind of save. */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="cat-event-date">Date</label>
+            <input
+              id="cat-event-date"
+              data-action="cat-event-date"
+              className={`mt-1 ${inputClass}`}
+              value={form.event_date}
+              onChange={set("event_date")}
+              placeholder="OCT 5 — 6, 2026"
+            />
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="cat-event-venue">Venue</label>
+            <input
+              id="cat-event-venue"
+              data-action="cat-event-venue"
+              className={`mt-1 ${inputClass}`}
+              value={form.venue}
+              onChange={set("venue")}
+              placeholder="E-BLOCK · LABS A–E"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="cat-event-teamsize">Team size (printed)</label>
+            <input
+              id="cat-event-teamsize"
+              data-action="cat-event-teamsize"
+              className={`mt-1 ${inputClass}`}
+              value={form.team_size}
+              onChange={set("team_size")}
+              placeholder="2 — 5 MEMBERS"
+            />
+            <p className="mt-1 font-mono text-[10px] text-ash">
+              The label the card prints. The rule is the cap above.
+            </p>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="cat-event-status">Status</label>
+            <input
+              id="cat-event-status"
+              data-action="cat-event-status"
+              className={`mt-1 ${inputClass}`}
+              value={form.status}
+              onChange={set("status")}
+              placeholder="REGISTRATION OPEN"
+            />
+          </div>
+        </div>
+        {form.entry_type === "team" ? (
+          <div>
+            <label className={labelClass} htmlFor="cat-event-paymode">Who pays</label>
+            <select
+              id="cat-event-paymode"
+              data-action="cat-event-paymode"
+              className={`mt-1 ${inputClass}`}
+              value={form.payment_mode}
+              onChange={set("payment_mode")}
+            >
+              {PAYMENT_MODES.map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+            <p className="mt-1 font-mono text-[10px] text-ash">
+              {form.payment_mode === "per_team"
+                ? "One registration covers the squad and the leader pays this once for all of them."
+                : "Every participant registers and pays this themselves; any team is formed afterwards."}
+            </p>
+          </div>
+        ) : null}
+        <div>
+          <label className={labelClass} htmlFor="cat-event-teamurl">Team link</label>
+          <input
+            id="cat-event-teamurl"
+            data-action="cat-event-teamurl"
+            type="url"
+            className={`mt-1 ${inputClass}`}
+            value={form.team_form_url}
+            onChange={set("team_form_url")}
+            placeholder="https://…"
+          />
+          <p className="mt-1 font-mono text-[10px] text-ash">
+            Where a paid participant goes to form a team, if that happens elsewhere. Blank for none.
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={labelClass} htmlFor="cat-event-price">
+              {form.payment_mode === "per_team" ? "Squad payment" : "Individual payment"}
+            </label>
+            <input
+              id="cat-event-price"
+              data-action="cat-event-price"
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              className={`mt-1 ${inputClass}`}
+              value={form.price}
+              onChange={set("price")}
+              placeholder={form.payment_mode === "per_team" ? "300" : "249"}
+            />
+            <p className="mt-1 font-mono text-[10px] text-ash">
+              {form.payment_mode === "per_team"
+                ? "The whole squad's fee, paid once by the leader."
+                : "What one person pays. Leave blank to keep the current price."}
+            </p>
+          </div>
+          <div>
+            <label className={labelClass} htmlFor="cat-event-limit">
+              {form.payment_mode === "per_team" ? "Squad limit" : "Registration limit"}
+            </label>
+            <input
+              id="cat-event-limit"
+              data-action="cat-event-limit"
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              className={`mt-1 ${inputClass}`}
+              value={form.max_registrations}
+              onChange={set("max_registrations")}
+              placeholder="No limit"
+            />
+            <p className="mt-1 font-mono text-[10px] text-ash">
+              {form.payment_mode === "per_team"
+                ? "How many squads. Leave blank for no limit."
+                : "Total people allowed. Leave blank for no limit."}
+            </p>
+          </div>
         </div>
         <label className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ash">
           <input type="checkbox" checked={form.is_active} onChange={set("is_active")} />

@@ -24,8 +24,23 @@ import { chromium } from "playwright";
 
 const BASE = process.env.VERIFY_BASE || "http://localhost:4173";
 
-/** The probe: a bundle whose price is safe to move for the duration of a test. */
-const PROBE = { kind: "bundle", refId: "bundled-349" };
+/**
+ * The probe: a PUBLISHED event whose price is safe to move for the duration of a
+ * test.
+ *
+ * An event rather than a bundle, and that switch is deliberate. This used to
+ * probe bundle/bundled-349 on /bundled, which quietly made the whole check
+ * depend on that one bundle staying published: a master withdrawing it left the
+ * probe rendering nothing, `renderedPrice` returned null, and the test reported a
+ * harness error instead of a verdict. Events are the surface that always has
+ * something on it, and paradox-2065 is an individual, solo event — no team cap,
+ * no squad semantics — so moving its price exercises the plain price path
+ * without touching a bundle or a payment mode.
+ */
+const PROBE = { kind: "event", refId: "paradox-2065" };
+/** The page that renders it, and the text that identifies its row. */
+const PROBE_PATH = "/events/paradox";
+const PROBE_TITLE = "PARADOX 2065";
 /** A distinctive value, far from any real price, so a match cannot be a coincidence. */
 const PROBE_PRICE = 4242;
 
@@ -106,23 +121,23 @@ async function publicPrice() {
 }
 
 /**
- * The price as actually painted on /bundled, read out of the live DOM.
+ * The price as actually painted on the probe's realm page, read out of the DOM.
  *
- * Scoped to the probe's own card (the one numbered 02) rather than the whole
- * page, so an unrelated card happening to cost the same amount cannot produce a
- * false pass.
+ * Scoped to the probe's OWN card (the one naming PROBE_TITLE) rather than the
+ * whole page, so an unrelated card happening to cost the same amount cannot
+ * produce a false pass. Every card on a realm page carries a fee, so an
+ * unscoped "first number on the page" match would pass by accident.
  */
 async function renderedPrice(page) {
-  await page.goto(`${BASE}/bundled`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}${PROBE_PATH}`, { waitUntil: "domcontentloaded" });
   // The first paint deliberately shows the compiled fallback; the point of the
   // test is what the page shows AFTER the database answers, so give it time.
   await page.waitForTimeout(2500);
-  const card = page.locator("article").filter({ hasText: "02" }).first();
+  const card = page.locator("article").filter({ hasText: PROBE_TITLE }).first();
   if ((await card.count()) === 0) return null;
-  return card.locator("p").first().innerText().then((t) => {
-    const m = t.replace(/,/g, "").match(/(\d+)/);
-    return m ? m[1] : null;
-  });
+  const text = await card.innerText();
+  const m = text.replace(/,/g, "").match(/₹\s*(\d+)/);
+  return m ? m[1] : null;
 }
 
 
@@ -139,7 +154,7 @@ if (originalPrice == null) {
 }
 
 console.log(`probe: ${PROBE.kind}/${PROBE.refId} is currently Rs ${originalPrice}`);
-console.log(`target: ${BASE}/bundled\n`);
+console.log(`target: ${BASE}${PROBE_PATH}\n`);
 
 const browser = await chromium.launch();
 let exitCode = 0;
@@ -155,7 +170,7 @@ try {
   const before = await renderedPrice(page);
   out(
     before === String(originalPrice),
-    "bundled page renders the current database price",
+    "the event page renders the current database price",
     `rendered=${before} db=${originalPrice}`
   );
 

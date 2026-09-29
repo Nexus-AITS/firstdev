@@ -8,8 +8,10 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById, getEventFee, getEventFields, getEntryType } from "../data/events.js";
+import { getEventFee, getEventFields, getEntryType, getPaymentMode } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
+import { loadCatalogue } from "../data/catalogue.js";
+import useEventView from "../hooks/useEventView.js";
 import usePricing from "../hooks/usePricing.js";
 import {
   addRegistration,
@@ -122,7 +124,9 @@ function RejectedUtrForm({ onSubmit, rowId }) {
 
 export default function Register() {
   const [searchParams] = useSearchParams();
-  const event = getEventById(searchParams.get("event"));
+  // The live view, so a price, cap or payment mode edited in the console is what
+  // the person registering is actually shown and charged.
+  const event = useEventView(searchParams.get("event"));
   const bundle = getBundleById(searchParams.get("bundle"));
   // `status` is three-valued on purpose: while it is "loading" the session is
   // still resolving and rendering the sign-in wall would be a lie (and a flash
@@ -403,6 +407,14 @@ export default function Register() {
     });
     setSaving(false);
 
+    /* The event they just took a seat in is now one more than it was a moment
+       ago, and every card on the site shows that number. Re-read the catalogue
+       so a participant who goes back to the events list sees their own
+       registration counted, rather than a number frozen at page load.
+       Deliberately not awaited: the QR step must not wait on a refresh, and the
+       store notifies its subscribers when the response lands. */
+    if (result.ok) loadCatalogue({ force: true });
+
     if (!result.ok) {
       setError(result.error);
       return;
@@ -620,12 +632,18 @@ export default function Register() {
                   ? "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
                   : "Submit your details — this entry is free, no payment needed. The admin confirms and your seat is locked."
                 : "Pick an event in the realms to register with its fee, or fill your details below to join the roster."}
-              {/* Driven by entryType, not by the free-text teamSize: the hint
-                  makes a PROMISE about how many people may enter, and that has
-                  to come from the field the database enforces. An individual
-                  event says nothing here rather than repeating "SOLO". */}
+              {/* Driven by entryType and paymentMode, not by the free-text
+                  teamSize. The two modes make DIFFERENT promises about money and
+                  this is the line a participant reads before paying:
+                    per_team   — one leader pays for the whole squad;
+                    per_person — everyone pays their own fee and any team is
+                                 formed afterwards, off this site.
+                  A participant who is told only "team event, up to 5" cannot tell
+                  whether they owe 300 or 1500. */}
               {getEntryType(event) === "team"
-                ? ` Team event — up to ${event.maxTeamMembers} members per team, and each member registers separately.`
+                ? getPaymentMode(event) === "per_team"
+                  ? ` Squad event — one leader registers and pays for the whole squad of up to ${event.maxTeamMembers}. Enter your own in-game ID; the rest of your squad does not register separately.`
+                  : ` Team event — up to ${event.maxTeamMembers} per team, and each member registers and pays separately. You will be able to form your team once your payment is approved.`
                 : ""}
             </p>
           </Reveal>

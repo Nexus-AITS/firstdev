@@ -362,6 +362,29 @@ try {
   );
 
   /* ============ B. a bundle: selection, profile resume, and the refresh dead end ============ */
+// The flow under test is real and still in the product, but "a bundle exists and
+// is on sale" is a business decision, not a test fixture. This section used to
+// assume bundle/bundled-299 was published and simply drove it, so the day a
+// master retired that bundle the whole section collapsed into "That bundle is
+// not available" and six assertions about SELECTION, RESUME and REFRESH — none
+// of which care about pricing or publication — went down with it. So publish it
+// here, remember what it really was, and put it back in the finally block. The
+// test now states its own precondition instead of silently inheriting one.
+// `var`, not `const`: this sits inside the try block but is read in the finally
+// block, and `const` would be scoped to the try and throw a ReferenceError on
+// the very path that exists to clean up after a failure.
+var BUNDLE_ID = "bundled-299";
+var bundleWasActive = undefined;
+const bundleWas = await sql(
+  `select is_active from public.bundle_catalogue where id = '${BUNDLE_ID}'`
+);
+if (bundleWas.length === 0) {
+  console.error(`FAIL: ${BUNDLE_ID} is missing from the catalogue — run npm run db:migrate`);
+  process.exit(1);
+}
+bundleWasActive = bundleWas[0].is_active;
+await sql(`update public.bundle_catalogue set is_active = true where id = '${BUNDLE_ID}'`);
+
 
   await page.goto(`${BASE}/register?bundle=bundled-299`, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
@@ -585,6 +608,13 @@ try {
   console.log(`FAIL  suite aborted  |  ${String(err.message).slice(0, 300)}`);
 } finally {
   if (browser) await browser.close();
+  // Restore the bundle to whatever the operators had it set to, so running this
+  // test never publishes or withdraws a bundle behind their back.
+  if (bundleWasActive !== undefined) {
+    await sql(
+      `update public.bundle_catalogue set is_active = ${bundleWasActive} where id = '${BUNDLE_ID}'`
+    );
+  }
   await cleanup();
   const leftovers = await sql(`
     select
