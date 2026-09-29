@@ -722,6 +722,74 @@ try {
     out(dupeBody?.ok === true, "a distinct-content bundle is accepted", JSON.stringify(dupeBody).slice(0, 120));
   }
 
+  /* ---------- 3b. a bundle that IS accepted, end to end ---------- */
+
+  // Everything above this point is a REFUSAL. Nothing here had ever created a
+  // bundle through this path, which is why the console's "created" message
+  // shipped while every save was being refused: the two paths look identical
+  // from the outside unless you check what the body said.
+  const good = await rpc(
+    "staff_upsert_bundle",
+    {
+      p_bundle: {
+        id: `${PROBE}-good`,
+        number: "ZZ",
+        name: "Probe Good",
+        // Deliberately NOT the same content as the -dupe probe above. Two live
+        // bundles cannot share a content key, and the -dupe probe is still live
+        // at this point, so reusing its lines would be refused as a duplicate
+        // and this would test the wrong thing.
+        includes: [{ pick: "forge", count: 3 }],
+      },
+    },
+    token
+  );
+  out(good.status === 200, "an accepted bundle answers HTTP 200", String(good.status));
+  const goodBody = await good.json();
+  out(goodBody?.ok === true, "and the body says ok", JSON.stringify(goodBody).slice(0, 120));
+
+  const goodRow = await sql(
+    `select is_active, content_key from public.bundle_catalogue where id = '${PROBE}-good'`
+  );
+  out(
+    goodRow.length === 1 && goodRow[0].is_active === true && goodRow[0].content_key !== "",
+    "the row is written, live, and carries a real content key",
+    JSON.stringify(goodRow)
+  );
+
+  const goodLines = await sql(
+    `select position from public.bundle_includes
+      where bundle_id = '${PROBE}-good' order by position`
+  );
+  out(
+    goodLines.length === 1 && goodLines[0].position === 0,
+    "its include lines are numbered from ZERO, so the only line is position 0",
+    JSON.stringify(goodLines)
+  );
+
+  // Retired now, before the next section, so a live probe cannot be the reason
+  // the "an event seated by a live bundle cannot be retired" check below passes.
+  await sql(`delete from public.bundle_catalogue where id = '${PROBE}-good'`);
+
+  // The bug this file exists to prevent, stated as a check. A refusal is an
+  // ANSWER, so it arrives as HTTP 200; a console that keys on the status alone
+  // will call it a success, clear the form and tell the operator the bundle
+  // exists. So the envelope has to stay exactly this shape, and the console has
+  // to read `body.ok`. If this ever fails, the refusal path has started raising
+  // an exception instead - which is also fine, but then the status is real
+  // again and this assertion has to change with it.
+  const envelope = await rpc(
+    "staff_upsert_bundle",
+    { p_bundle: { id: "X", name: "n", includes: [{ event: "nexus-breach" }] } },
+    token
+  );
+  const envelopeBody = await envelope.json();
+  out(
+    envelope.status === 200 && envelopeBody?.ok === false && Boolean(envelopeBody?.error),
+    "a REFUSAL is HTTP 200 with ok:false and a message - so the body is the authority",
+    `HTTP ${envelope.status} ${JSON.stringify(envelopeBody).slice(0, 100)}`
+  );
+
   /* ---------- 4. retiring an event that a live bundle seats ---------- */
 
   const seatBlock = await rpc("staff_retire_event", { p_event_id: "nexus-breach" }, token);

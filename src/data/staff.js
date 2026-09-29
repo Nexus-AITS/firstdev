@@ -152,7 +152,22 @@ export async function staffFetch(path, { method = "GET", body, staffToken, heade
 
 async function rpc(name, params, staffToken) {
   const res = await staffFetch(`rpc/${name}`, { method: "POST", body: params, staffToken });
-  return { ok: res.ok, body: res.data, status: res.status };
+  // `ok` is the OPERATION's outcome, not the HTTP envelope's.
+  //
+  // Every staff_* RPC reports a refusal by returning HTTP 200 with a body of
+  // {"ok": false, "error": "..."} - a raised exception would be a 4xx. That is
+  // the right shape: "you are not a master", "no active event called X" and
+  // "another live bundle already offers exactly this" are all answers, not
+  // transport failures, and the message is written for the operator.
+  //
+  // Keying on the HTTP status alone reported success for a save the database
+  // threw away: the console said a new bundle was created, cleared the form,
+  // and reloaded - and nothing was in the database. Every refusal path in the
+  // console went through that. The body is the authority; the status only says
+  // whether we got far enough to read it.
+  const body = res.data;
+  const refused = body !== null && typeof body === "object" && body.ok === false;
+  return { ok: res.ok && !refused, body, status: res.status };
 }
 
 /**
