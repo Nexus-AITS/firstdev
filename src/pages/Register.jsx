@@ -206,16 +206,32 @@ export default function Register() {
   const resumedRef = useRef(null);
 
   /**
-   * The participant's own row for the email currently typed, or null.
+   * The participant's own row for this email AND this purchase, or null.
    *
    * `mine` is already RLS-scoped to the signed-in user, so this can only ever
    * match a row the caller owns. That is what makes adopting it safe: it is not
    * "does this email exist in the database", it is "is this one of mine".
+   *
+   * The purchase is part of the key, and it has to be. This matched on email
+   * ALONE, so once a person could hold more than one row - migration ...023
+   * allows a bundle AND a separate event - it returned whichever row came first
+   * regardless of what was being bought, and `finalize` then attached the new
+   * reference to it. Buying a bundle and then an event produced ONE row: the
+   * bundle, carrying the event's UTR. The second purchase was not refused, it was
+   * absorbed, which is worse.
+   *
+   * A NULL purchase means there is nothing to be specific about - someone joining
+   * the roster from the plain /register form - so it falls back to any row for
+   * that address, which is the pre-...023 behaviour and the right one there.
    */
-  function findMine(email) {
+  function findMine(email, purchaseRef = null) {
     const key = String(email ?? "").trim().toLowerCase();
     if (!key) return null;
-    return mine.find((r) => String(r.email ?? "").trim().toLowerCase() === key) ?? null;
+    const owned = mine.filter(
+      (r) => String(r.email ?? "").trim().toLowerCase() === key
+    );
+    if (!purchaseRef) return owned[0] ?? null;
+    return owned.find((r) => (r.purchase_ref ?? null) === purchaseRef) ?? null;
   }
 
   /**
@@ -430,7 +446,10 @@ export default function Register() {
     // uq_registrations_email, stranding the participant on this step with an
     // error they cannot resolve. `mine` only contains rows RLS lets them see,
     // so "is one of mine with this email" is the safe test.
-    let row = findMine(form.email);
+    // Matched on the purchase as well as the email, so a participant who already
+    // has a bundle row and is now buying a single event gets a NEW row rather
+    // than having the bundle's row adopted and overwritten.
+    let row = findMine(form.email, purchase?.ref ?? null);
     let created = false;
 
     if (!row) {
@@ -519,7 +538,12 @@ export default function Register() {
 
     // Already registered under this email and it is MINE (RLS says so): continue
     // that registration rather than failing to create a duplicate.
-    const existing = findMine(form.email);
+    // The purchase is part of the match. Matching on email alone meant a second,
+    // DIFFERENT purchase was adopted onto the first row and its reference written
+    // there - so a bundle followed by an event left one row, showing the bundle,
+    // carrying the event's UTR. A person may now hold several rows, and each
+    // purchase gets its own.
+    const existing = findMine(form.email, purchase?.ref ?? null);
     if (existing) {
       setDone(existing);
       // Verified seats are settled: nothing to submit, nothing to ask the

@@ -93,6 +93,9 @@ const PROBE_PASSWORD = "Zz-Probe-Password-9134";
 const EMAIL_A = `zz-reg-a-${stamp}@example.com`;
 const EMAIL_B = `zz-reg-b-${stamp}@example.com`;
 const EMAIL_C = `zz-reg-c-${stamp}@example.com`;
+/* Section D: one person, two purchases. The same address on purpose - the whole
+ * point is that a second, DIFFERENT purchase gets its own row. */
+const EMAIL_D = `zz-reg-d-${stamp}@example.com`;
 
 /** The service role key, used in memory only and never logged. */
 async function serviceKey() {
@@ -747,6 +750,121 @@ try {
   );
 
   out(pageErrors.length === 0, "no console or page errors during the flows", pageErrors.slice(0, 2).join(" | ") || "none");
+
+  /* ============ D. one person, two purchases: a bundle AND a separate event ============ */
+  // The report this covers: register a bundle, then register an event, and the
+  // roster showed the bundle ONLY. The second purchase was not refused - it was
+  // ABSORBED. Two unique indexes said "one registration per human", so the second
+  // had nowhere to go, and findMine(email) matched the first row regardless of
+  // what was being bought, so finalize() wrote the event's UTR onto the bundle's
+  // row. The row ended up internally inconsistent too: purchase_type saying
+  // "bundle" while purchase_ref held an event id.
+  //
+  // One email, two purchases, and both must survive as their own row - each with
+  // its own reference, amount and label.
+  await page.goto(`${BASE}/register?bundle=${BUNDLE_ID}`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1800);
+  await fillDetails(page, EMAIL_D, { roll: `21ZZZD${stamp.slice(-3)}` });
+  await pickAndSave(page);
+  await payAndSubmit(page, `4023470${stamp.slice(-6)}`);
+  const afterBundle = await state(page);
+  out(afterBundle.success, "a bundle registration completes", `error=${afterBundle.error}`);
+
+  const firstRow = await sql(
+    `select purchase_type, purchase_ref, utr_number
+       from public.registrations where email = '${EMAIL_D}'`
+  );
+  out(
+    firstRow.length === 1 && firstRow[0].purchase_ref === BUNDLE_ID,
+    "...and records the BUNDLE, not an event",
+    JSON.stringify(firstRow[0] ?? {})
+  );
+
+  // The second purchase: a plain single event, same person, same browser.
+  await page.goto(`${BASE}/register?event=${SEAT_A}`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1800);
+  await fillDetails(page, EMAIL_D, { roll: `21ZZZD${stamp.slice(-3)}` });
+  const atEventPay = await state(page);
+  out(atEventPay.utr, "a second purchase reaches its own payment step", `error=${atEventPay.error}`);
+  await payAndSubmit(page, `4023471${stamp.slice(-6)}`);
+  const afterEvent = await state(page);
+  out(afterEvent.success, "...and completes", `error=${afterEvent.error}`);
+
+  const bothRows = await sql(
+    `select purchase_type, purchase_ref, purchase_label, purchase_amount, utr_number
+       from public.registrations where email = '${EMAIL_D}' order by created_at`
+  );
+  out(
+    bothRows.length === 2,
+    "THE REPORT: one person, two purchases -> TWO rows, not one overwritten row",
+    `rows=${bothRows.length}`
+  );
+
+  const bundleRow = bothRows.find((r) => r.purchase_ref === BUNDLE_ID);
+  const eventRow = bothRows.find((r) => r.purchase_ref === SEAT_A);
+  out(
+    Boolean(bundleRow) &&
+      bundleRow.purchase_type === "bundle" &&
+      bundleRow.utr_number === `4023470${stamp.slice(-6)}`,
+    "the bundle row still holds the BUNDLE's own reference",
+    JSON.stringify(bundleRow ?? null)
+  );
+  out(
+    Boolean(eventRow) &&
+      eventRow.purchase_type === "event" &&
+      eventRow.utr_number === `4023471${stamp.slice(-6)}`,
+    "and the event row holds the EVENT's own reference",
+    JSON.stringify(eventRow ?? null)
+  );
+  out(
+    Boolean(bundleRow) && Boolean(eventRow) &&
+      Number(bundleRow.purchase_amount) > 0 && Number(eventRow.purchase_amount) > 0,
+    "each row carries its own amount",
+    `bundle=${bundleRow?.purchase_amount} event=${eventRow?.purchase_amount}`
+  );
+  out(
+    Boolean(eventRow) && !/bundl|offer/i.test(eventRow.purchase_label ?? ""),
+    "the event row is labelled from the EVENT, not the bundle",
+    `label="${eventRow?.purchase_label}"`
+  );
+
+  // The profile renders one card per row. Both purchases have a reference
+  // submitted, so neither carries a CONTINUE link - a row that has already paid
+  // correctly has nothing to continue - so this checks that both are LISTED,
+  // which is what the report was about: one purchase showing up and the other
+  // missing.
+  await page.goto(`${BASE}/profile`, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(2500);
+  const profileBody = await page.locator("body").innerText();
+  out(
+    /REGISTER PROBE/i.test(profileBody) && /VISION 2065/i.test(profileBody),
+    "the profile lists BOTH purchases, not just the first",
+    profileBody.replace(/\s+/g, " ").includes("REGISTER PROBE")
+      ? "bundle row shown"
+      : "BUNDLE ROW MISSING"
+  );
+  out(
+    (profileBody.match(/Submitted — waiting for verification|waiting for verification/gi) ?? []).length >= 2,
+    "and each carries its own status line",
+    `status lines=${(profileBody.match(/waiting for verification/gi) ?? []).length}`
+  );
+
+  // The same purchase twice must still be refused. The unique key is
+  // per-purchase precisely so the original rule survives what was removed.
+  const dupe = await sqlAs(
+    `insert into public.registrations
+       (name, email, roll_number, college_name, year, department, phone_number,
+        payment_status, purchase_type, purchase_ref)
+     values ('zz dupe', '${EMAIL_D}', '21ZZZD${stamp.slice(-3)}', 'ZZ Institute',
+             '2nd', 'CSE', '9000000077', 'awaiting_utr', 'event', '${SEAT_A}');`
+  );
+  out(
+    !dupe.ok,
+    "but the SAME event twice is still refused",
+    dupe.ok ? "ACCEPTED - the per-purchase key is not doing its job" : (dupe.error || "").slice(0, 90)
+  );
+
+
 } catch (err) {
   fail += 1;
   console.log(`FAIL  suite aborted  |  ${String(err.message).slice(0, 300)}`);
