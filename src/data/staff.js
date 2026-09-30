@@ -631,6 +631,83 @@ export async function staffDeleteEvent(id, token) {
   return rpc("staff_delete_event", { p_event_id: id }, token);
 }
 
+/* ---------- lookups: colleges and departments ---------- */
+
+/**
+ * The active colleges and departments, for the registration form.
+ *
+ * No token: the form renders for a signed-out visitor, so this read is public by
+ * design - two lists of institution names.
+ */
+export async function loadLookups() {
+  const res = await rpc("public_lookups", {}, null);
+  if (!res.ok || !res.body?.ok) {
+    return { ok: false, colleges: [], departments: [], error: "The lists are unavailable." };
+  }
+  return {
+    ok: true,
+    colleges: res.body.colleges ?? [],
+    departments: res.body.departments ?? [],
+  };
+}
+
+/** Every college and department, retired ones included. Admin+. */
+export async function staffListLookups(token) {
+  const res = await rpc("staff_list_lookups", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, colleges: [], departments: [], error: res.body?.error ?? "The lists are unavailable." };
+  }
+  return {
+    ok: true,
+    colleges: res.body.colleges ?? [],
+    departments: res.body.departments ?? [],
+  };
+}
+
+/** Add or re-activate one. `kind` is "college" or "department". */
+export async function staffUpsertLookup(kind, name, token, id = null) {
+  return rpc("staff_upsert_lookup", { p_kind: kind, p_name: name, p_id: id }, token);
+}
+
+/** Retire one. Registrations store the name as text, so this never deletes data. */
+export async function staffRetireLookup(kind, id, token) {
+  return rpc("staff_retire_lookup", { p_kind: kind, p_id: id }, token);
+}
+
+/* ---------- money and per-event rosters ---------- */
+
+/**
+ * The reconciliation split: to_verify (referenced, not yet checked against the
+ * bank) and received (verified), plus the queue behind them.
+ *
+ * Coordinator and above, like the roster itself. The two figures are deliberately
+ * not one number: conflating them is how a roster looks solvent while a payment
+ * sits unreconciled.
+ */
+export async function staffFinanceSummary(token) {
+  const res = await rpc("staff_finance_summary", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The totals are unavailable." };
+  }
+  return { ok: true, ...res.body };
+}
+
+/**
+ * The people behind an event's registration count, with the cap and seats left.
+ *
+ * The same count event_registered_count() shows on the card, broken down - so the
+ * number and the list cannot disagree. One person holding both a bundle seat and
+ * a direct entry appears once per purchase, which is why `rows` can exceed
+ * `people`.
+ */
+export async function staffListEventRegistrations(eventId, token) {
+  const res = await rpc("staff_list_event_registrations", { p_event_id: eventId }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That list is unavailable." };
+  }
+  return { ok: true, ...res.body };
+}
+
 /** Permanently remove a bundle, its price and its include lines. MASTER ONLY. */
 export async function staffDeleteBundle(id, token) {
   return rpc("staff_delete_bundle", { p_bundle_id: id }, token);

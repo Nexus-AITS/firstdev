@@ -43,6 +43,8 @@ import Select from "../components/ui/Select.jsx";
 import DateField from "../components/ui/DateField.jsx";
 import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import ContactManager from "../components/admin/ContactManager.jsx";
+import LookupManager from "../components/admin/LookupManager.jsx";
+import FinanceStrip from "../components/admin/FinanceStrip.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
 // used to build its price list from them, which meant an event created in the
 // Catalogue tab had no row to edit and a price for a deleted event was invisible.
@@ -64,6 +66,9 @@ const TABS = [
   // Contact channels are admin+ (the operations team that verifies payments is
   // the team that answers the phone), matching the RPC's own gate.
   { id: "contacts", label: "Contacts", action: "manage_contacts" },
+  // Colleges and departments are admin+ to edit, for the same reason contacts
+  // are: the team that takes registrations is the team that knows the colleges.
+  { id: "lookups", label: "Colleges", action: "manage_contacts" },
 ];
 
 /**
@@ -1809,16 +1814,25 @@ function Console({ session, onExpired }) {
 
       <div className="mt-8">
         {active?.id === "roster" ? (
-          <RosterTab
-            session={session}
-            window={rows.registrations}
-            paging={paging.registrations}
-            busy={Boolean(loading.roster)}
-            reload={() => reload("roster")}
-            setPage={(page) => goToPage("roster", page)}
-            setPageSize={(size) => setPageSize("roster", size)}
-            setFilter={(patch) => setFilter("roster", patch)}
-          />
+          <>
+            {/* The two money figures, above the list. "How much have we
+                received" and "how much are we waiting to check" were only
+                answerable by downloading the roster and totalling a column by
+                hand, and answering them with one combined number is how a
+                payment gets written off as collected before anyone has seen the
+                bank statement. */}
+            <FinanceStrip token={session.token} />
+            <RosterTab
+              session={session}
+              window={rows.registrations}
+              paging={paging.registrations}
+              busy={Boolean(loading.roster)}
+              reload={() => reload("roster")}
+              setPage={(page) => goToPage("roster", page)}
+              setPageSize={(size) => setPageSize("roster", size)}
+              setFilter={(patch) => setFilter("roster", patch)}
+            />
+          </>
         ) : null}
         {active?.id === "audit" ? (
           <AuditTab
@@ -1859,6 +1873,8 @@ function Console({ session, onExpired }) {
         {/* Same shape of ownership as the catalogue: the contacts tab loads and
             saves itself, so it takes no window, pager or reload wiring. */}
         {active?.id === "contacts" ? <ContactManager session={session} /> : null}
+
+      {active?.id === "lookups" ? <LookupManager session={session} /> : null}
       </div>
     </main>
   );

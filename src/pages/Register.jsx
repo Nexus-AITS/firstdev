@@ -25,7 +25,7 @@ import {
 import { loadMyProfile } from "../data/profiles.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
 import EventSelection from "../components/register/EventSelection.jsx";
-import { setRegistrationEvents } from "../data/staff.js";
+import { loadLookups, setRegistrationEvents } from "../data/staff.js";
 
 /**
  * Registration wizard — the single place every event (and bundle) registration
@@ -204,6 +204,27 @@ export default function Register() {
   // `mine` changes underneath it). A ref, not a plain object: a fresh object
   // every render would forget the guard immediately.
   const resumedRef = useRef(null);
+
+  /* Colleges and departments, for the form dropdowns.
+   *
+   * Fetched once on mount and NOT awaited by anything that renders: the form
+   * renders for a signed-out visitor, so waiting on this would put a placeholder
+   * where the details form used to be. The typed field below each dropdown is
+   * what a participant uses in the meantime, and it is also how they report a
+   * college the list has not heard of. An empty list is a degraded state, not a
+   * broken page, and is worded that way where it renders. */
+  const [lookups, setLookups] = useState({ colleges: [], departments: [] });
+  useEffect(() => {
+    let alive = true;
+    loadLookups().then((result) => {
+      if (alive && result.ok) {
+        setLookups({ colleges: result.colleges, departments: result.departments });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /**
    * The participant's own row for this email AND this purchase, or null.
@@ -862,7 +883,41 @@ export default function Register() {
                     </div>
                     <div>
                       <label className={labelClass} htmlFor="reg-college">College</label>
-                      <input id="reg-college" name="college_name" required value={form.college_name} onChange={set("college_name")} className={fieldClass} placeholder="AITS Tirupati" />
+                      {/* From the database, not a text box. "AITS Tirupati",
+                          "AITS Tirupati " and "aits tirupati" were three
+                          spellings of one college and a pivot by college_name
+                          split them three ways. A dropdown cannot produce a
+                          fourth spelling, and the operations team adds to the
+                          list from the console - so a new college does not need
+                          a developer and a deploy.
+                          The textbox below it is NOT a fallback: a participant
+                          with a college the list has not heard of must be able
+                          to say so rather than be forced into a wrong one. */}
+                      {lookups.colleges.length ? (
+                        <Select
+                          id="reg-college"
+                          name="college_name"
+                          tone="site"
+                          required
+                          value={form.college_name}
+                          onChange={(value) => setForm((f) => ({ ...f, college_name: value }))}
+                          options={lookups.colleges.map((c) => ({ value: c.name, label: c.name }))}
+                          placeholder="Select college"
+                          className={fieldClass}
+                        />
+                      ) : (
+                        <p className="font-mono text-[10px] text-crystal/40">
+                          The college list is loading. You can type it below.
+                        </p>
+                      )}
+                      <input
+                        id="reg-college-other"
+                        value={form.college_name}
+                        onChange={set("college_name")}
+                        className={`${fieldClass} mt-2`}
+                        placeholder="Or type your college"
+                        aria-label="College, typed"
+                      />
                     </div>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">
@@ -882,7 +937,34 @@ export default function Register() {
                     </div>
                     <div>
                       <label className={labelClass} htmlFor="reg-dept">Department</label>
-                      <input id="reg-dept" name="department" required value={form.department} onChange={set("department")} className={fieldClass} placeholder="CSE" />
+                      {/* Same reasoning as the college, and the same escape
+                          hatch: a department the list has not heard of is
+                          information, not an error. */}
+                      {lookups.departments.length ? (
+                        <Select
+                          id="reg-dept"
+                          name="department"
+                          tone="site"
+                          required
+                          value={form.department}
+                          onChange={(value) => setForm((f) => ({ ...f, department: value }))}
+                          options={lookups.departments.map((d) => ({ value: d.name, label: d.name }))}
+                          placeholder="Select department"
+                          className={fieldClass}
+                        />
+                      ) : (
+                        <p className="font-mono text-[10px] text-crystal/40">
+                          The department list is loading. You can type it below.
+                        </p>
+                      )}
+                      <input
+                        id="reg-dept-other"
+                        value={form.department}
+                        onChange={set("department")}
+                        className={`${fieldClass} mt-2`}
+                        placeholder="Or type your department"
+                        aria-label="Department, typed"
+                      />
                     </div>
                   </div>
                   <div className="grid gap-5 sm:grid-cols-2">

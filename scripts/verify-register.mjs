@@ -164,12 +164,17 @@ async function fillDetails(page, email, extra = {}) {
   // own — otherwise the SEPARATE registrations this suite makes would collide
   // with each other and the collision would read as a wizard bug.
   await page.fill("#reg-roll", extra.roll ?? "21ZZZ99");
-  await page.fill("#reg-college", extra.college ?? "ZZ Institute of Technology");
+  // College and department are themed listboxes now, with a typed field under
+  // each for a college the list has not heard of. The probe drives the TYPED
+  // field, deliberately: it is a real path a participant can take, and driving it
+  // keeps the test independent of which colleges the operators happen to have
+  // added. The dropdowns themselves are covered by verify:lookups.
+  await page.fill("#reg-college-other", extra.college ?? "ZZ Institute of Technology");
+  await page.fill("#reg-dept-other", extra.department ?? "CSE");
   // The year is a themed listbox now, not a <select>: opening it and clicking
   // the option is what a participant does, where selectOption() drove an
   // element that no longer exists.
   await choose(page, "reg-year", extra.year ?? "2nd");
-  await page.fill("#reg-dept", extra.department ?? "CSE");
   await page.fill("#reg-phone", extra.phone ?? "+91 90000 00000");
   await page.fill("#reg-email", email);
   await page.click("#reg-details-next");
