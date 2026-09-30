@@ -11,6 +11,7 @@ import { getEventById, getEventFee } from "../data/events.js";
 import { getBundlePrice } from "../data/bundles.js";
 import { loadMyProfile, saveMyProfile } from "../data/profiles.js";
 import { listMyRegistrationsDetailed } from "../data/registrations.js";
+import { loadLookups } from "../data/staff.js";
 
 /**
  * Participant profile — the page that answers "where was I?".
@@ -111,6 +112,25 @@ export default function Profile() {
   const [profile, setProfile] = useState(null);
   const [details, setDetails] = useState(emptyDetails);
   const [rows, setRows] = useState([]);
+
+  /* Colleges and departments for the dropdowns, the same public list the
+   * registration form uses. Fetched once on mount and deliberately not awaited by
+   * anything that renders: the profile is the page a returning participant lands
+   * on, and a spinner there is worse than a text field that fills in a moment
+   * later. An empty list simply omits the dropdowns and leaves the typed fields,
+   * so the page is never blocked on this read. */
+  const [lookups, setLookups] = useState({ colleges: [], departments: [] });
+  useEffect(() => {
+    let alive = true;
+    loadLookups().then((result) => {
+      if (alive && result.ok) {
+        setLookups({ colleges: result.colleges, departments: result.departments });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -409,14 +429,33 @@ export default function Profile() {
                         <label className={labelClass} htmlFor="profile-college">
                           College
                         </label>
+                        {/* Same DB-backed list as the registration form, and for
+                            the same reason: a free text box here produced the
+                            spelling variants that split one college three ways in
+                            a pivot. The typed field underneath is not a fallback -
+                            a participant whose college the list has not heard of
+                            must be able to say so rather than pick a wrong one. */}
+                        {lookups.colleges.length ? (
+                          <Select
+                            id="profile-college-select"
+                            name="college_name"
+                            tone="site"
+                            disabled={locked}
+                            value={details.college_name}
+                            onChange={(value) => set("college_name")(value)}
+                            options={lookups.colleges.map((c) => ({ value: c.name, label: c.name }))}
+                            placeholder="Select college"
+                            className={`${fieldClass} disabled:opacity-50`}
+                          />
+                        ) : null}
                         <input
                           id="profile-college"
                           name="college_name"
                           disabled={locked}
                           value={details.college_name}
                           onChange={set("college_name")}
-                          className={`${fieldClass} disabled:opacity-50`}
-                          placeholder="AITS Tirupati"
+                          className={`${fieldClass} mt-2 disabled:opacity-50`}
+                          placeholder="Or type your college"
                         />
                       </div>
                     </div>
@@ -443,14 +482,27 @@ export default function Profile() {
                         <label className={labelClass} htmlFor="profile-dept">
                           Department
                         </label>
+                        {lookups.departments.length ? (
+                          <Select
+                            id="profile-dept-select"
+                            name="department"
+                            tone="site"
+                            disabled={locked}
+                            value={details.department}
+                            onChange={(value) => set("department")(value)}
+                            options={lookups.departments.map((d) => ({ value: d.name, label: d.name }))}
+                            placeholder="Select department"
+                            className={`${fieldClass} disabled:opacity-50`}
+                          />
+                        ) : null}
                         <input
                           id="profile-dept"
                           name="department"
                           disabled={locked}
                           value={details.department}
                           onChange={set("department")}
-                          className={`${fieldClass} disabled:opacity-50`}
-                          placeholder="CSE"
+                          className={`${fieldClass} mt-2 disabled:opacity-50`}
+                          placeholder="Or type your department"
                         />
                       </div>
                     </div>

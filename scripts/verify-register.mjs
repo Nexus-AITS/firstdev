@@ -854,6 +854,28 @@ try {
     `status lines=${(profileBody.match(/waiting for verification/gi) ?? []).length}`
   );
 
+  // The profile's college and department are DB-backed dropdowns too, with a
+  // typed field under each. Asserted here rather than in a profile-specific suite
+  // because this is the only place the suite is already signed in, and a form
+  // that is only reachable behind an auth gate is exactly the kind of thing that
+  // quietly loses a change.
+  const profileSelects = await page
+    .locator("#profile-college-select, #profile-dept-select")
+    .count();
+  const profileTyped = await page
+    .locator("#profile-college, #profile-dept")
+    .count();
+  out(
+    profileSelects === 2,
+    "the profile offers college and department as dropdowns",
+    `selects=${profileSelects}`
+  );
+  out(
+    profileTyped === 2,
+    "…each with a typed field for a college the list has not heard of",
+    `typed=${profileTyped}`
+  );
+
   // The same purchase twice must still be refused. The unique key is
   // per-purchase precisely so the original rule survives what was removed.
   const dupe = await sqlAs(
