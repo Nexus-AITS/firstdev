@@ -2,7 +2,11 @@ import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
 import EventLogo from "../event/EventLogo.jsx";
-import Seats from "../event/Seats.jsx";
+/* The registration count used to render here through <Seats/>. It is now an
+   operations figure and lives only in the admin console: a public counter tells a
+   prospective participant how busy an event already is, which is the operations
+   team's commercial information rather than theirs, and it changes the decision
+   to register in a way nobody asked for. */
 
 /** THE ARENA — competitive HUD row: sigil, number, title, mode, status, view. */
 export default function ArenaRow({ event, index = 0 }) {
@@ -69,7 +73,6 @@ export default function ArenaRow({ event, index = 0 }) {
             >
               {event.status}
             </span>
-            <Seats event={event} className="mt-2 block" />
           </div>
 
           <div className="md:col-span-2 md:text-right">

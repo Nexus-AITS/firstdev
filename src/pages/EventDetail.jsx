@@ -6,7 +6,8 @@ import RealmFX from "../components/fx/RealmFX.jsx";
 import CrystalSigil from "../components/event/CrystalSigil.jsx";
 import EventLogo from "../components/event/EventLogo.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
-import Seats from "../components/event/Seats.jsx";
+/* The registration count used to render here through <Seats/>. It is now an
+   operations figure and lives only in the admin console. */
 import NotFound from "./NotFound.jsx";
 import { formatEventFee, getEventFee, formatEntryType, paymentNote } from "../data/events.js";
 import { realms } from "../data/realms.js";
@@ -141,9 +142,14 @@ export default function EventDetail() {
             <p className="mt-9 text-[10px] font-medium uppercase tracking-[0.5em] text-lavender/75">
               Registration happens right here in the Nexus
             </p>
-            <div className="mt-4 flex justify-center">
-              <Seats event={event} />
-            </div>
+            {/* The registration count used to render here through <Seats/>. It
+                was the only thing under this line, and the whole div went with
+                it rather than being left holding nothing.
+
+                A public counter tells a prospective participant how busy an event
+                already is — the operations team's information rather than theirs —
+                and it changes the decision to register. It lives in the console
+                now, where an operator reconciles against it. */}
             {/* `!= null`, not truthy: a fee of 0 must still render (as FREE). */}
             {getEventFee(event.id) != null ? (
               <div className="mt-6 flex flex-col items-center gap-2">

@@ -1,7 +1,10 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import Seats from "../event/Seats.jsx";
+/* The registration count used to render here through <Seats/>. It is now an
+   operations figure and lives only in the admin console: a public counter tells a
+   prospective participant how busy an event already is, which is the operations
+   team's commercial information rather than theirs. */
 /* getEventFee stays imported: this component reads the DB-first fee directly
    for the `fee != null` gate, and dropping it in favour of paymentNote() left a
    free identifier in the file. esbuild does not resolve free identifiers, so the
@@ -103,8 +106,11 @@ export default function EventRow({ event, index = 0 }) {
             </p>
           ) : null}
 
-          <Seats event={event} className="mt-3" />
-
+          {/* The registration count used to render here through <Seats/>. It is now an
+              operations figure and lives only in the admin console: a public
+              counter tells a prospective participant how busy an event already
+              is, which is the operations team's information rather than theirs,
+              and it changes the decision to register in a way nobody asked for. */}
           <div className="mt-6">
             <ExploreLink id={event.id} />
           </div>

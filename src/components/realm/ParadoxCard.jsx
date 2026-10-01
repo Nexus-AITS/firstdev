@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
-import Seats from "../event/Seats.jsx";
+/* The registration count used to render here through <Seats/>. It is now an
+   operations figure and lives only in the admin console. */
 import {
   formatEventFee,
   formatEntryType,
@@ -86,8 +87,10 @@ export default function ParadoxCard({ event, index = 0 }) {
                 </p>
               ) : null}
 
-              <Seats event={event} className="mt-4" />
-
+              {/* The registration count used to render here through <Seats/>.
+                  Removed: a public counter tells a prospective participant how busy
+                  an event already is, which is the operations team's information
+                  rather than theirs, and it steers the decision to register. */}
               <Link
                 to={`/events/${event.id}`}
                 data-cursor="open"
