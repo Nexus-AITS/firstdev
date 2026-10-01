@@ -41,6 +41,8 @@
     "verify:multi": "node scripts/verify-multi-purchase.mjs",
     "verify:lookups": "node scripts/verify-lookups.mjs",
     "verify:pricing": "node scripts/verify-pricing.mjs",
+    "verify:roster-filters": "node scripts/verify-roster-filters.mjs",
+    "inspect:export": "node scripts/inspect-export.mjs",
     "verify:pagination": "node scripts/verify-pagination.mjs",
     "verify:rls-hoist": "node scripts/verify-rls-hoist.mjs",
     "verify:selection": "node scripts/verify-selection.mjs",

@@ -726,14 +726,33 @@ function RosterTab({
           <div className="mt-2">
             <Select
               id="roster-status"
+              data-action="roster-status"
               value={paging.status}
               onChange={(value) => setFilter({ status: value })}
               options={[
                 { value: "all", label: "All" },
+                /* Every value public.payment_status allows, in lifecycle order.
+                   `awaiting_cash` is here because it is a real state with real
+                   rows - money due at the desk, never a UTR - and it was MISSING
+                   from this list. Ten registrations sat in it, counted in every
+                   total on this screen and reachable by no filter at all: the one
+                   question an operator asks most at the desk ("who still owes me
+                   cash?") had no answer, and the only way to get it was to search
+                   the free-text box, which does not match on status.
+
+                   The list is written out rather than read from the database
+                   because the labels are operator wording, not enum labels, and
+                   the two are not the same vocabulary: `unverified` means a UTR
+                   was submitted and nobody has checked it, which is not what
+                   "unverified" suggests to somebody reading it quickly. The test
+                    scripts/verify-roster-filters.mjs asserts this list against the
+                   live enum, so a status added by a later migration fails the
+                   suite instead of quietly becoming unfilterable. */
                 { value: "awaiting_utr", label: "Awaiting UTR" },
+                { value: "awaiting_cash", label: "Awaiting cash" },
+                { value: "unverified", label: "Unverified" },
                 { value: "verified", label: "Verified" },
                 { value: "rejected", label: "Rejected" },
-                { value: "unverified", label: "Unverified" },
               ]}
               className="w-[11rem]"
             />

@@ -343,6 +343,58 @@ function q(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * An EXACT match on one text value, written as a single-element `in` list.
+ *
+ * WHY NOT `eq.${q(value)}` - IT RETURNS NOTHING, AND IT HAS SINCE THE FILE OPENED
+ *
+ * The obvious spelling of an exact match is `eq."value"`, and it is wrong here.
+ * PostgREST does not strip the double quotes from a single-value `eq`, so the
+ * quotes are compared as part of the string and the predicate becomes
+ * college_name = '"Others"' - a value no row can ever hold. The result is a
+ * clean 200 with an empty array: no error, no warning, an empty roster.
+ *
+ * Measured against the live roster (130 rows, 9 colleges, 10 departments):
+ *
+ *     college_name=eq."Others"                                   ->   0 rows
+ *     college_name=eq.Others                                     ->   2 rows
+ *     college_name=eq."ANNAMACHARYA ... :: TIRUPATI"             ->   0 rows
+ *     college_name=eq.ANNAMACHARYA ... :: TIRUPATI               -> 107 rows
+ *     department=eq."ECE"                                        ->   0 rows
+ *     department=eq.ECE                                          ->  57 rows
+ *
+ * So the college and department filters matched NOTHING, for every value, since
+ * they were introduced. The count beside each option said 107 and the list said
+ * zero, and the count - the thing built to prove the filter was not broken - was
+ * the only part that was right. The export did not have this bug, because
+ * staff_export_registrations compares in SQL, so the file and the screen
+ * disagreed about the same filter: an operator narrowing to one college saw an
+ * empty roster and still received that college's rows in the spreadsheet.
+ *
+ * WHY `in.("value")` IS THE RIGHT SHAPE, NOT JUST A WORKING ONE
+ *
+ * `in` is a list operator, so it has to cope with values containing the
+ * separator, and it is the operator that HONOURS the quoting:
+ *
+ *     in.("Others")                                        ->   2 rows  (one literal)
+ *     in.("Others,ANNAMACHARYA ...")                       ->   0 rows  (ONE literal:
+ *                                                                   the comma stayed inside)
+ *     in.("Others","ANNAMACHARYA ...")                     -> 109 rows  (a genuine two-value list)
+ *
+ * That middle line is the whole point. A college whose name contains a comma is
+ * matched as one value, which is the failure `q()` was written to prevent and
+ * which the unquoted `eq.` form would reintroduce the day someone typed one.
+ * Verified against all nine real colleges and all ten real departments, including
+ * the values carrying `::`, `&`, brackets and spaces.
+ *
+ * The search box is NOT affected and keeps using q() directly: inside
+ * `or=(...)` the quotes are honoured, and a quoted and an unquoted search return
+ * identical counts (121 of 130 for the same term).
+ */
+function exact(value) {
+  return `in.(${q(value)})`;
+}
+
 /** Compose `?select=...&order=...` with optional server-side filters.
  *  Every filter is a server-side predicate on purpose: filtering 200 rows in
  *  the browser and then paging them would page a *filtered client list*, so
@@ -393,12 +445,32 @@ export function normalizePage({ page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
   return { page: n, pageSize: size };
 }
 
-export async function staffListRegistrations(token, options = {}) {
-  const { page, pageSize } = normalizePage(options);
-  const { query, status, event, fromDate, toDate, college, year, department } =
-    options;
+/**
+ * Build the PostgREST filter map for a roster query. Exported, and pure.
+ *
+ * WHY IT IS EXTRACTED
+ *
+ * This used to live inline in staffListRegistrations, and scripts/verify-roster-filters.mjs
+ * reimplemented it. That is how the bug it now guards against survived a test
+ * suite: the test built `college_name=eq."<value>"` and the app built the same
+ * broken string, so the test agreed with the app and both were wrong. A test
+ * that re-derives the thing it is testing cannot catch a mistake in it.
+ *
+ * So the test imports THIS and sends whatever comes out. If the encoding is
+ * wrong, the test sends the wrong encoding and fails, which is the entire
+ * point of having it.
+ */
+export function rosterFilters({
+  query,
+  status,
+  event,
+  fromDate,
+  toDate,
+  college,
+  year,
+  department,
+} = {}) {
   const term = String(query ?? "").trim();
-
   const filters = {};
   if (status && status !== "all") filters.payment_status = `eq.${status}`;
 
@@ -409,12 +481,12 @@ export async function staffListRegistrations(token, options = {}) {
      without them the only route is the free-text search, which matches on
      substring and cannot say "in CSIT, and only 2nd year".
 
-     The values are sent through q() rather than interpolated raw, for the same
-     reason the search term is: a college whose name contains a comma or a
-     bracket would otherwise be read as filter syntax, and PostgREST would answer
-     with a different question than the one asked. */
-  if (college && college !== "all") filters.college_name = `eq.${q(college)}`;
-  if (department && department !== "all") filters.department = `eq.${q(department)}`;
+     These go through exact() rather than `eq.${q(...)}`. The quoted `eq` form
+     matches nothing at all on this PostgREST - see exact() above - so college and
+     department silently returned an empty roster for every value while the count
+     beside the option said 107. */
+  if (college && college !== "all") filters.college_name = exact(college);
+  if (department && department !== "all") filters.department = exact(department);
   /* Year needs no quoting: it is a closed set of four values the column CHECK
      allows, and quoting it would still be correct but reads as if it were text
      the operator might get wrong. */
@@ -465,11 +537,23 @@ export async function staffListRegistrations(token, options = {}) {
     // to Postgres so it is scoped to the whole table instead of one loaded page.
     // Filtering the loaded rows in the browser instead would report "no match"
     // for every participant who is not on the page currently on screen.
+    //
+    // q() IS correct here, unlike in exact(): inside `or=(...)` PostgREST does
+    // honour the quoting, and a quoted and an unquoted search return identical
+    // counts. That asymmetry is measured, not assumed - see exact().
     filters.or = `(name.ilike.${q(like)},email.ilike.${q(like)},roll_number.ilike.${q(
       like
     )},college_name.ilike.${q(like)},utr_number.ilike.${q(like)})`;
   }
   if (range.length) filters.and = `(${range.join(",")})`;
+
+  return { filters, term };
+}
+
+export async function staffListRegistrations(token, options = {}) {
+  const { page, pageSize } = normalizePage(options);
+  const { event } = options;
+  const { filters } = rosterFilters(options);
 
   /* `registration_events(...)` is only needed to filter; selecting the embedded
      rows as well would multiply the response for no benefit, since the roster
