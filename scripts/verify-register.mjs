@@ -143,6 +143,9 @@ const state = (page) =>
       gate: vis("#reg-auth-gate"),
       details: vis("#reg-step-details"),
       select: vis("#reg-step-select"),
+      // The team step is conditional — only a per_team event collects a roster —
+      // so it is reported alongside the others rather than assumed present.
+      team: vis("#reg-step-team"),
       utr: vis("#reg-step-utr"),
       success: vis("#reg-success"),
       error: txt("#reg-error"),
@@ -297,6 +300,15 @@ try {
   const page = await ctx.newPage();
   const pageErrors = [];
   page.on("pageerror", (e) => pageErrors.push(e.message));
+  /* Console output too, not just uncaught errors: a ReferenceError or a hung
+     promise inside an event handler is not a page error, and the only place it
+     shows up is the console. */
+  /* Errors AND warnings. console.log is stripped from production builds
+     (vite.config.js marks it `pure`), so warn/error are the only diagnostics that
+     survive into the bundle this suite actually tests. */
+  page.on("console", (m) => {
+    if (m.type() === "error" || m.type() === "warning") pageErrors.push(m.text().slice(0, 160));
+  });
   page.on("console", (m) => {
     if (m.type() === "error" && !/favicon|fonts\.g|Failed to load resource|net::ERR_/i.test(m.text())) {
       pageErrors.push(m.text());
@@ -647,12 +659,18 @@ try {
 
   await page.goto(`${BASE}/register?event=free-fire`, { waitUntil: "domcontentloaded" });
   const ffEntry = await settle(page);
-  // Three, not four: details, payment reference, confirm. The QR used to be a
-  // step of its own and is now on the reference screen, so the count dropped by
-  // one everywhere. It is still a PAID flow - `paid` is what adds the step at all.
-  out(ffEntry.steps === 3, "FREE FIRE is a PAID three-step flow (it is not free)", `steps=${ffEntry.steps}`);
+  // Four, not three: details, TEAM, payment reference, confirm. FREE FIRE is a
+  // per_team event — one leader pays for the whole squad — so the wizard now
+  // collects who is in that squad before the payment, and the step count went up
+  // by one. It is still a PAID flow: `paid` is what adds the reference step at
+  // all, and this count is what proves the team step did not displace it.
+  out(ffEntry.steps === 4, "FREE FIRE is a PAID four-step flow (details, team, payment, confirm)", `steps=${ffEntry.steps}`);
   const ffField = await page.locator('[data-event-field="free_fire_id"]').count();
   out(ffField === 1, "the Free Fire ID input is on the form", `inputs=${ffField}`);
+  // The payment method is offered on the details step, because a cash
+  // registration never reaches a reference field at all.
+  const ffPay = await page.locator('[data-action="reg-pay-cash"]').count();
+  out(ffPay === 1, "the cash option is offered on a paid registration", `cash=${ffPay}`);
 
   // The ID is required: fill everything else and try.
   await fillDetails(page, EMAIL_C, { roll: "21ZZZ03" });
@@ -678,8 +696,45 @@ try {
   await page.fill('[data-event-field="free_fire_id"]', ffId);
   await page.click("#reg-details-next");
   await page.waitForTimeout(1800);
+  const ffAtTeam = await state(page);
+  out(
+    ffAtTeam.team,
+    "with the ID filled in, the flow continues to the TEAM step",
+    `error=${ffAtTeam.error}`
+  );
+
+  /* The cap is the event's own, and it COUNTS THE LEADER — FREE FIRE allows 4
+     people, so a leader may add 3. The counter has to say so in those terms,
+     because a leader reading "max 4" beside a form that already holds them is
+     the arithmetic that produces a team one person short. */
+  const ffCount = (await page.locator('[data-testid="team-count"]').textContent()) ?? "";
+  out(
+    /1 of 4/.test(ffCount),
+    "the counter counts the leader, against the event's own cap",
+    ffCount.trim()
+  );
+
+  // A team of one is a complete answer on this event (the cap is an upper
+  // bound), so a name alone is enough to reach payment. This is asserted rather
+  // than assumed because a cap enforced as a MINIMUM would strand every leader
+  // who has not found their squad yet.
+  await page.fill("#reg-team-name", "ZZ SQUAD");
+  await page.click('[data-action="save-team"]');
+  /* Waiting for the SCREEN rather than a fixed pause. Saving a team is two
+     sequential round trips - the registration row first, because the roster is
+     keyed on it - and a fixed timeout either flakes on a slow link or hides a
+     genuine failure behind enough time for it to look like progress. */
+  const reachedPay = await page
+    .locator("#reg-step-utr")
+    .waitFor({ state: "visible", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
   const ffAtPay = await state(page);
-  out(ffAtPay.utr, "with the ID filled in, the flow continues to payment", `error=${ffAtPay.error}`);
+  out(
+    reachedPay && ffAtPay.utr,
+    "…and saving the team continues to payment",
+    `error=${ffAtPay.error} teamStillOpen=${!reachedPay} console=${JSON.stringify(pageErrors.slice(0, 4))}`
+  );
 
   await payAndSubmit(page, `4023458${stamp.slice(-6)}`);
   const ffDone = await state(page);

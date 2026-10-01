@@ -395,11 +395,30 @@ export function normalizePage({ page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
 
 export async function staffListRegistrations(token, options = {}) {
   const { page, pageSize } = normalizePage(options);
-  const { query, status, event, fromDate, toDate } = options;
+  const { query, status, event, fromDate, toDate, college, year, department } =
+    options;
   const term = String(query ?? "").trim();
 
   const filters = {};
   if (status && status !== "all") filters.payment_status = `eq.${status}`;
+
+  /* College, year and department are COLUMNS on registrations, not a join, so
+     these are plain equality predicates and the whole thing stays one query.
+     They are here because the roster's job is "find this one person": an operator
+     chasing a department that has entered the wrong year needs those three, and
+     without them the only route is the free-text search, which matches on
+     substring and cannot say "in CSIT, and only 2nd year".
+
+     The values are sent through q() rather than interpolated raw, for the same
+     reason the search term is: a college whose name contains a comma or a
+     bracket would otherwise be read as filter syntax, and PostgREST would answer
+     with a different question than the one asked. */
+  if (college && college !== "all") filters.college_name = `eq.${q(college)}`;
+  if (department && department !== "all") filters.department = `eq.${q(department)}`;
+  /* Year needs no quoting: it is a closed set of four values the column CHECK
+     allows, and quoting it would still be correct but reads as if it were text
+     the operator might get wrong. */
+  if (year && year !== "all") filters.year = `eq.${year}`;
 
   /* The event filter is a real JOIN, not a LIKE on the free-text
      purchase_label. The label is prose the browser wrote, and matching on prose
@@ -587,18 +606,63 @@ export async function staffRevokeSessions(userId, token) {
  * would hand Postgres a UTC instant and silently cut the day at 05:30 IST.
  */
 export async function staffExportRegistrations(token, options = {}) {
-  const { fromDate = null, toDate = null, event = null, status = null } = options;
+  const {
+    fromDate = null,
+    toDate = null,
+    event = null,
+    status = null,
+    college = null,
+    year = null,
+    department = null,
+  } = options;
   const body = {
     p_from_date: fromDate || null,
     p_to_date: toDate || null,
     p_event: event || null,
     p_status: status || null,
+    /* The college / department / year filters go through too, deliberately. The
+       sheet on disk and the roster on screen are the same question asked twice,
+       and an export that ignored the filters would hand an operator narrowed to
+       one college a file of everybody — which looks authoritative and is not.
+       "all" is the console's "not filtering" value and the function treats it as
+       no filter, so it is passed through rather than stripped here. */
+    p_college: college || null,
+    p_year: year || null,
+    p_department: department || null,
   };
   const res = await rpc("staff_export_registrations", body, token);
   if (!res.ok) {
     return { ok: false, rows: [], error: res.body?.message ?? "The export failed." };
   }
   return { ok: true, rows: Array.isArray(res.body) ? res.body : [], error: null };
+}
+
+/**
+ * What the roster's college / department / year filters can actually match,
+ * each with a registration count.
+ *
+ * Coordinator+. The counts are the whole reason this exists: the dropdown used to
+ * be built from the registration FORM's lookup list, which offers 17 colleges
+ * while only 3 have anybody registered. Picking a college with nobody produced
+ * an empty roster indistinguishable from a broken filter, so operators stopped
+ * trusting it. A count of 0 is an honest answer; a silent empty list is not.
+ *
+ * The values come from the registrations UNIONED with the published lookups, so a
+ * college nobody has registered from is still selectable — and still visibly
+ * empty — rather than missing.
+ */
+export async function staffFilterOptions(token) {
+  const res = await rpc("staff_filter_options", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, colleges: [], departments: [], years: [], error: res.body?.error ?? null };
+  }
+  return {
+    ok: true,
+    colleges: res.body?.colleges ?? [],
+    departments: res.body?.departments ?? [],
+    years: res.body?.years ?? [],
+    error: null,
+  };
 }
 
 /* ---------- catalogue CRUD (master only; the DB enforces it too) ---------- */
@@ -894,5 +958,151 @@ export async function staffRetireContact(id, token) {
   const res = await rpc("staff_retire_contact", { p_contact_id: id }, token);
   if (!res.ok) return { ok: false, error: res.body?.error ?? "That contact could not be retired." };
   return { ok: true, error: null };
+}
+
+
+/* ---------- destinations, API keys, the dashboard link ---------- */
+
+/**
+ * Send the roster to a destination.
+ *
+ * This one does NOT go through staffFetch. The secret the outbound request
+ * carries is read from supabase_vault by a SECURITY DEFINER function, and the
+ * only safe place for that to travel is a server-side function — a browser
+ * fetch would put the destination's live credential on the wire to anyone
+ * watching. So the console posts a destination id to /api/push-registrations and
+ * the serverless function does the authenticated send.
+ *
+ * The staff token is passed through so the database still decides who may push:
+ * this wrapper is transport, not authority.
+ */
+export async function staffPushRegistrations(destinationId, token) {
+  const res = await fetch("/api/push-registrations", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Nexus-Staff-Token": token ?? "",
+    },
+    body: JSON.stringify({ destination_id: destinationId }),
+  });
+  let body = null;
+  try {
+    body = await res.json();
+  } catch {
+    /* a proxy error page, not our JSON */
+  }
+  if (!res.ok || body?.ok === false) {
+    return {
+      ok: false,
+      status: body?.status ?? res.status,
+      // The destination's own words, which is what an operator debugging a 401
+      // actually needs. The generic message is only a fallback.
+      error:
+        body?.error ??
+        body?.detail ??
+        "The roster could not be sent. Please try again.",
+    };
+  }
+  return { ok: true, count: body?.count ?? 0, status: body?.status ?? 200, error: null };
+}
+
+/** Every push destination, with its last outcome. Admin+ to read. */
+export async function staffListDestinations(token) {
+  const res = await rpc("staff_list_destinations", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, destinations: [], error: res.body?.error ?? "The destination list is unavailable." };
+  }
+  return { ok: true, destinations: res.body?.destinations ?? [], error: null };
+}
+
+/**
+ * Create or edit a destination. Master only.
+ *
+ * `api_secret` is write-only: it is sent once, stored in supabase_vault, and
+ * never returned again. A blank secret on an EDIT keeps the stored one rather
+ * than clearing it, because a form that silently dropped a working credential
+ * would be worse than one that ignores an empty box.
+ */
+export async function staffUpsertDestination(destination, token) {
+  const res = await rpc("staff_upsert_destination", { p_destination: destination }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That destination could not be saved." };
+  }
+  return {
+    ok: true,
+    id: res.body?.id ?? null,
+    secretPreview: res.body?.secret_preview ?? null,
+    error: null,
+  };
+}
+
+/** Remove a destination and its vault entry. Master only. */
+export async function staffDeleteDestination(id, token) {
+  const res = await rpc("staff_delete_destination", { p_id: id }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That destination could not be removed." };
+  }
+  return { ok: true, error: null };
+}
+
+/** The site-wide link a verified participant continues to. Admin+ to set. */
+export async function staffSetDashboardUrl(url, token) {
+  const res = await rpc("staff_set_dashboard_url", { p_url: url }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That link could not be saved." };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Mint a partner API key. Master only.
+ *
+ * The plaintext is in the response and NOWHERE else — it is stored only as a
+ * SHA-256 hash, so there is deliberately no function that can show it again. The
+ * caller must put it in front of the operator immediately; losing it means
+ * minting another, which is the intended consequence of not storing secrets in
+ * a database.
+ */
+export async function staffMintApiKey({ name, scopes, note }, token) {
+  const res = await rpc(
+    "staff_api_key_mint",
+    { p_name: name, p_scopes: scopes, p_note: note ?? null },
+    token
+  );
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That key could not be created." };
+  }
+  return { ok: true, key: res.body?.key ?? null, id: res.body?.id ?? null, error: null };
+}
+
+/** Every API key, with its prefix and scopes but never its secret. Master only. */
+export async function staffListApiKeys(token) {
+  const res = await rpc("staff_api_keys", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, keys: [], error: res.body?.error ?? "The API key list is unavailable." };
+  }
+  return { ok: true, keys: res.body?.keys ?? [], error: null };
+}
+
+/** Revoke a key. Takes effect on the caller's next request, with no deploy. */
+export async function staffRevokeApiKey(id, token) {
+  const res = await rpc("staff_api_key_revoke", { p_id: id }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That key could not be revoked." };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * The public dashboard link, for the profile page.
+ *
+ * Goes with NO staff token on purpose: it is a link a participant is meant to
+ * follow, and the page that renders it is the one screen a signed-in
+ * participant should be able to read without an operations session.
+ */
+export async function loadDashboardUrl() {
+  const res = await rpc("public_site_settings", {}, null);
+  if (!res.ok) return { url: null, error: null };
+  return { url: res.body?.dashboard_url ?? null, error: null };
 }
 

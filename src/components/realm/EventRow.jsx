@@ -2,7 +2,19 @@ import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
 import Seats from "../event/Seats.jsx";
-import { formatEventFee, formatEntryType, getEventFee, getPaymentMode } from "../../data/events.js";
+/* getEventFee stays imported: this component reads the DB-first fee directly
+   for the `fee != null` gate, and dropping it in favour of paymentNote() left a
+   free identifier in the file. esbuild does not resolve free identifiers, so the
+   build stayed green and the page died at runtime with a ReferenceError on every
+   row — which is what a blank realm page is. A lint pass or an undefined-variable
+   check would have caught this; a build does not. */
+import {
+  formatEventFee,
+  formatEntryType,
+  formatPaymentMode,
+  getEventFee,
+  paymentNote,
+} from "../../data/events.js";
 import usePricing from "../../hooks/usePricing.js";
 
 function ExploreLink({ id }) {
@@ -72,10 +84,22 @@ export default function EventRow({ event, index = 0 }) {
           {fee != null ? (
             <p className="mt-6 text-[11px] font-medium uppercase tracking-[0.36em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
               {formatEventFee(event.id)} · {formatEntryType(event)}
-              {/* Only where it changes what the number means. On a per-person
-                  event the mode is the default and saying so on every card is
-                  noise; on a squad event Rs 300 means something different. */}
-              {getPaymentMode(event) === "per_team" ? " · per team" : ""}
+              {/* WHO pays, whenever the event is entered as a TEAM. On a squad
+                  event the bare figure is ambiguous in both directions — Rs 300
+                  for five people, or Rs 300 each for five people — and the card
+                  is where that gets decided. An individual event never shows it,
+                  because one person paying one fee needs no explanation. */}
+              {formatPaymentMode(event) ? ` · ${formatPaymentMode(event)}` : ""}
+            </p>
+          ) : null}
+
+          {/* The sentence, not the label: "₹349 · TEAM · MAX 5" is what produced the
+              confusion in the first place, because neither word said who pays.
+              This states it, and for a per-person team it also does the
+              arithmetic, so a full squad's cost is never a surprise at the desk. */}
+          {paymentNote(event) ? (
+            <p className="mt-2 max-w-md text-[11px] leading-relaxed tracking-wide text-crystal/45">
+              {paymentNote(event)}
             </p>
           ) : null}
 

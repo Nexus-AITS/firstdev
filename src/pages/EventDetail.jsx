@@ -8,7 +8,7 @@ import EventLogo from "../components/event/EventLogo.jsx";
 import MetaRow from "../components/event/MetaRow.jsx";
 import Seats from "../components/event/Seats.jsx";
 import NotFound from "./NotFound.jsx";
-import { formatEventFee, getEventFee, formatEntryType, getPaymentMode } from "../data/events.js";
+import { formatEventFee, getEventFee, formatEntryType, paymentNote } from "../data/events.js";
 import { realms } from "../data/realms.js";
 import useEventView from "../hooks/useEventView.js";
 import usePricing from "../hooks/usePricing.js";
@@ -158,12 +158,17 @@ export default function EventDetail() {
                   <span aria-hidden className="h-px w-8 bg-gold/40" />
                 </div>
                 {/* WHO pays is a different question from WHO may enter, and on a
-                    squad event it is the difference between Rs 300 per person and
-                    Rs 300 for five people. Saying only the cap would leave the
-                    amount ambiguous, so the mode is spelled out. */}
-                {getPaymentMode(event) === "per_team" ? (
-                  <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-gold/80">
-                    one squad leader pays this for up to {event.maxTeamMembers} players
+                    team event it is the difference between Rs 349 per person and
+                    Rs 349 for five people. This used to speak only for a squad, so
+                    NEXUS BREACH printed its cap and said nothing — which is how a
+                    participant ends up believing a team of five owes Rs 349.
+
+                    paymentNote() covers BOTH cases and does the arithmetic, and it
+                    returns null for an individual event, where one person paying
+                    one fee needs no explanation. */}
+                {paymentNote(event) ? (
+                  <p className="mt-1 max-w-md text-center font-mono text-[10px] uppercase tracking-[0.2em] leading-relaxed text-gold/80">
+                    {paymentNote(event)}
                   </p>
                 ) : null}
               </div>

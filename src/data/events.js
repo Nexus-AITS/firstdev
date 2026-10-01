@@ -48,6 +48,12 @@ export const events = [
     payment: 349,
     entryType: "team",
     maxTeamMembers: 5,
+    // The ONE exception to "a team pays as a team". Every participant pays their
+    // own fee and the team is formed on the hackathon's own website, so this
+    // site never collects a teammate list and the leader is not paying for
+    // anybody. The database derives payment_mode from this flag and from
+    // entry_type (migration ...028), so it cannot be set independently.
+    teamFormedOffsite: true,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "fracture",
@@ -69,7 +75,13 @@ export const events = [
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
     entryType: "team",
-    maxTeamMembers: 5,
+    // 2, not 5 — the console lowered this cap, and this compiled copy still said
+    // 5. The database is the authority (getEventView overlays it), so the live
+    // page was right, but the OFFLINE fallback printed a cap that contradicted
+    // it. On a payment line that is not a cosmetic difference: it decides whether
+    // a participant believes a team owes Rs 1245 or Rs 249.
+    maxTeamMembers: 2,
+    paymentMode: "per_team",
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "temporal",
@@ -91,7 +103,10 @@ export const events = [
     teamSize: "1 — 5 MEMBERS",
     payment: 249,
     entryType: "team",
-    maxTeamMembers: 5,
+    // 3, not 5, and paid for by the leader — same reason as vision-2065: the
+    // console is the authority and the offline copy must not contradict it.
+    maxTeamMembers: 3,
+    paymentMode: "per_team",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "circuit",
@@ -110,10 +125,11 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "MAIN BLOCK — 2 CLASSROOMS",
-    teamSize: "1 — 5 MEMBERS",
+    teamSize: "1",
     payment: 249,
-    entryType: "team",
-    maxTeamMembers: 5,
+    // Individual — see the note on code-rebuilding. A compiled "team, up to 5"
+    // here would print a cap the console has removed.
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "neural",
@@ -132,10 +148,14 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "LABS D & E",
-    teamSize: "1 — 5 MEMBERS",
+    teamSize: "",
     payment: 249,
-    entryType: "team",
-    maxTeamMembers: 5,
+    // Individual, and this compiled copy used to say "team, up to 5". The console
+    // is the authority and getEventView overlays it, so the live page already
+    // rendered this as a solo event — but a cold first paint, or the moment the
+    // catalogue call has not answered, printed a TEAM cap for an event that has
+    // none. On a payment line that invents a rule the organiser never set.
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "lavender",
     sigil: "rebuild",
@@ -155,10 +175,10 @@ export const events = [
     ],
     date: "OCT 6, 2026",
     venue: "COLLEGE PREMISES",
-    teamSize: "2 — 4 MEMBERS",
+    teamSize: "",
     payment: 249,
-    entryType: "team",
-    maxTeamMembers: 4,
+    // Individual — see the note on code-rebuilding.
+    entryType: "individual",
     status: "REGISTRATION OPEN",
     accent: "gold",
     sigil: "mystery",
@@ -267,7 +287,11 @@ export const events = [
     teamSize: "SQUAD OF 4",
     payment: 300,
     entryType: "team",
-    maxTeamMembers: 5,
+    // 4, not 5. The operator set this in the console to match "SQUAD OF 4" and
+    // the compiled copy here still said 5, which is the disagreement
+    // scripts/verify-catalogue.mjs exists to catch. The database is the
+    // authority; this is the offline fallback and it has to agree with it.
+    maxTeamMembers: 4,
     // The one event where payment is NOT per person. A squad pays once, the
     // leader pays it for everyone, and one registration covers the whole squad —
     // so the fee below is the squad's total, not a per-head rate. Every other
@@ -337,38 +361,121 @@ export const ENTRY_TYPES = [
   { id: "team", label: "Team" },
 ];
 
-/** Who pays, for a select and for a value check. */
-export const PAYMENT_MODES = [
-  { id: "per_person", label: "Each person pays" },
-  { id: "per_team", label: "One leader pays for the squad" },
-];
-
 /**
  * How an event's entry is paid for, defaulted to "per_person".
  *
- * Mirrors getEntryType: every event pays per person unless it says otherwise,
- * and per person is both the rule and the safe default — a wrong default here
- * would under-charge every participant on an event that forgot to declare.
- * A per_team event is one registration covering a squad, paid once by a leader.
+ * Reads the DATABASE value, which migration ...028 now DERIVES from
+ * entry_type and team_formed_offsite, so this is a read of a settled fact
+ * rather than a second rule that could disagree with the first.
+ *
+ *   per_person  each participant pays their own fee, and any team is formed
+ *               elsewhere afterwards (the hackathon)
+ *   per_team    one registration covers the squad and a leader pays once
  */
 export function getPaymentMode(event) {
   return event?.paymentMode === "per_team" ? "per_team" : "per_person";
 }
 
 /**
+ * Does a leader have to LIST their teammates on this event?
+ *
+ * The single predicate the wizard, the event card and the console all ask, so
+ * they cannot disagree about which events collect a roster.
+ *
+ * It is deliberately NOT `getEntryType(event) === "team"`. A team event whose
+ * team is formed on another website is a team event, and asking its leader for
+ * teammate details here would be asking for data the operations team will never
+ * use - because they are entered, and paid for, somewhere else. The two
+ * questions are different and this one is the second.
+ *
+ * The cap is read, not hardcoded, because "up to 3" is a console decision: the
+ * wizard renders the number the database returns rather than one compiled here.
+ */
+export function requiresTeamRoster(event) {
+  if (getEntryType(event) !== "team") return false;
+  if (getPaymentMode(event) !== "per_team") return false;
+  return Number.isInteger(Number(event?.maxTeamMembers)) && Number(event.maxTeamMembers) > 0;
+}
+
+/**
+ * How many teammates a leader may add, or null when the event asks for no list.
+ *
+ * The cap COUNTS THE LEADER, so the number a leader may add is one less. This
+ * is the distinction the requirement turns on: a cap of 3 means a team of three
+ * people, so a leader with one teammate has entered two and can add one more.
+ * Returning the decrement here rather than at each call site is what stops one
+ * screen saying "3" and another saying "2" for the same event.
+ */
+export function maxTeammatesFor(event) {
+  if (!requiresTeamRoster(event)) return null;
+  return Math.max(Number(event.maxTeamMembers) - 1, 0);
+}
+
+/**
  * Human label for who pays, for the price line beside a fee.
  *
- *   per_person -> "PER PERSON"   (each participant pays this)
- *   per_team   -> "PER TEAM"     (one leader pays this for up to N)
+ *   per_team  -> "PER TEAM"    (one leader pays this for the whole squad)
+ *   a TEAM event whose members each pay -> "PER PERSON"
+ *   individual -> ""           (one person pays one fee; saying so is noise)
  *
- * Only shown when it is worth saying. On a per-person team event the detail
- * that matters is the cap, not the mode, and a label on every card would be
- * noise — so this returns "" unless the event is per_team or is a team with a
- * cap, and the caller decides where to put it.
+ * The middle case is the one this function exists for. A card used to read
+ * "₹349 · TEAM · MAX 5" for NEXUS BREACH, which is the one thing it must not
+ * say: the price is per HEAD, so a team of five owes ₹1,745 and a participant
+ * reading "₹349, team of 5" believes they owe ₹349. The database has always
+ * stored that distinction — payment_mode is per_person for this event because
+ * its team is formed on another website and the leader pays for nobody — but a
+ * team event printed only its cap, and the cap says nothing about money.
+ *
+ * So the rule is: whenever an event is entered as a team, the payment mode is
+ * stated, because that is exactly the situation where the bare number is
+ * ambiguous. An individual event never needs it.
  */
 export function formatPaymentMode(event) {
   if (getPaymentMode(event) === "per_team") return "PER TEAM";
+  if (getEntryType(event) === "team") return "PER PERSON";
   return "";
+}
+
+/**
+ * The sentence that removes the ambiguity, or null when there is nothing to
+ * disambiguate.
+ *
+ * It is derived from the same two facts the cards already carry — payment_mode
+ * and max_team_members — and it states the ARITHMETIC as well as the rule,
+ * because "each member pays ₹349 separately, so a full team of 5 is ₹1,745"
+ * cannot be misread the way "₹349 · TEAM · MAX 5" is.
+ *
+ * The full-team figure is the point, and it is only shown when it is knowable:
+ * a team event always carries a cap (the database refuses one without), and an
+ * individual event never needs the sentence. A cap of 1 makes the multiplication
+ * pointless, so it is left out rather than printed as a restatement of the fee.
+ *
+ * Returns null for an individual event, so a caller can render it conditionally
+ * rather than having to decide which events "need" it — that decision belongs
+ * here, or it drifts between the card and the detail page.
+ */
+export function paymentNote(event) {
+  if (getEntryType(event) !== "team") return null;
+
+  const cap = Number(event?.maxTeamMembers);
+  const team = Number.isInteger(cap) && cap > 0 ? cap : null;
+  const fee = getEventFee(event?.id);
+  const money = formatFee(fee);
+
+  if (getPaymentMode(event) === "per_team") {
+    return team
+      ? `One leader pays ${money} for the whole team — up to ${team} people, and nobody else is charged.`
+      : `One leader pays ${money} for the whole team.`;
+  }
+
+  // The per-person team: the hackathon. Every member settles their own seat,
+  // because the team is formed elsewhere and the leader is not paying for
+  // anybody. The total is stated so the cost of a full team is never a surprise
+  // at the registration desk.
+  if (!team || team <= 1 || fee == null || Number(fee) <= 0) {
+    return "Each member pays this separately — the team leader does not pay for the others.";
+  }
+  return `Each of the ${team} members pays ${money} separately, so a full team is ₹${Number(fee) * team}. Teams are formed after payment.`;
 }
 
 /**
@@ -501,6 +608,7 @@ const LIVE_OVERRIDES = [
   ["entry_type", "entryType"],
   ["max_team_members", "maxTeamMembers"],
   ["payment_mode", "paymentMode"],
+  ["team_formed_offsite", "teamFormedOffsite"],
   ["status", "status"],
   ["price", "livePrice"],
 ];

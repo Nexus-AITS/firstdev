@@ -7,11 +7,11 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById, getEventFee } from "../data/events.js";
+import { getEventById, getEventFee, getEventView } from "../data/events.js";
 import { getBundlePrice } from "../data/bundles.js";
 import { loadMyProfile, saveMyProfile } from "../data/profiles.js";
 import { listMyRegistrationsDetailed } from "../data/registrations.js";
-import { loadLookups } from "../data/staff.js";
+import { loadDashboardUrl, loadLookups } from "../data/staff.js";
 
 /**
  * Participant profile — the page that answers "where was I?".
@@ -103,6 +103,31 @@ function resumeHref(row) {
   return `/register?${params.toString()}`;
 }
 
+/**
+ * Where a verified participant continues to, or null when nothing is set.
+ *
+ * Two sources, in this order: the EVENT's own team_form_url, then the site-wide
+ * default an operator sets in the console's Destinations tab. The event wins
+ * because a hackathon's team-formation page is a different destination from the
+ * results dashboard, and a participant who registered for two events may have
+ * two different places to go.
+ *
+ * `siteDashboard` is a prop rather than a fetch in here so the page reads the
+ * link once, alongside the rest of its data, instead of each card deciding to
+ * ask. It may be null simply because the operator has not configured one, and
+ * the button then does not render at all — a button that goes nowhere is worse
+ * than no button.
+ *
+ * Only http(s) is accepted, in the database as well as here. This value ends up
+ * in an href on this origin, so a javascript: value would be stored XSS.
+ */
+function dashboardHref(row, siteDashboard) {
+  const view = row.purchase_type === "event" ? getEventView(row.purchase_ref) : null;
+  const own = view?.teamFormUrl;
+  const chosen = own || siteDashboard;
+  return typeof chosen === "string" && /^https?:\/\//i.test(chosen) ? chosen : null;
+}
+
 export default function Profile() {
   const { signedIn, status, configured, configPending, name, email, avatarUrl } = useAuth();
 
@@ -112,6 +137,21 @@ export default function Profile() {
   const [profile, setProfile] = useState(null);
   const [details, setDetails] = useState(emptyDetails);
   const [rows, setRows] = useState([]);
+
+  /* The site-wide "continue with dashboard" link, read once with everything else
+     this page loads. Null is a perfectly good answer — it means no operator has
+     configured one, and the button then does not appear rather than appearing
+     broken. */
+  const [siteDashboard, setSiteDashboard] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    loadDashboardUrl().then((result) => {
+      if (alive && result.url) setSiteDashboard(result.url);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /* Colleges and departments for the dropdowns, the same public list the
    * registration form uses. Fetched once on mount and deliberately not awaited by
@@ -645,6 +685,36 @@ export default function Profile() {
                                 >
                                   {s.cta} →
                                 </Link>
+                              </div>
+                            ) : null}
+
+                            {/* CONTINUE WITH DASHBOARD, once the payment is
+                                verified. This is the hand-off: a participant
+                                whose money has cleared stops being this site's
+                                problem and becomes the next screen's, so the
+                                page offers the way on rather than leaving them
+                                to read a confirmation and guess where to go.
+
+                                Only rendered when there IS a destination. Every
+                                event's team_form_url is currently blank, so the
+                                site-wide default is what will usually answer, and
+                                an operations team who has not configured one must
+                                not see a button that goes nowhere.
+
+                                The event's own link wins over the site default,
+                                because a hackathon's team-formation page is not
+                                the same destination as the results dashboard. */}
+                            {row.payment_status === "verified" && dashboardHref(row, siteDashboard) ? (
+                              <div className="mt-3">
+                                <a
+                                  href={dashboardHref(row, siteDashboard)}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                  data-dashboard={row.id}
+                                  className="inline-block border border-gold/50 bg-gold/10 px-5 py-2.5 text-[10px] font-medium uppercase tracking-[0.28em] text-gold transition-colors hover:border-gold"
+                                >
+                                  Continue with dashboard →
+                                </a>
                               </div>
                             ) : null}
                           </li>

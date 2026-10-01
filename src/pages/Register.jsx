@@ -8,7 +8,7 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventFee, getEventFields, getEntryType, getPaymentMode } from "../data/events.js";
+import { getEventFee, getEventFields, getEntryType, getPaymentMode, getEventView, requiresTeamRoster, maxTeammatesFor } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
 import { loadCatalogue, getCatalogueVersion, catalogueLoaded } from "../data/catalogue.js";
 import useEventView from "../hooks/useEventView.js";
@@ -18,13 +18,17 @@ import {
   addRegistration,
   listRegistrations,
   listRegistrationEvents,
+  loadTeam,
+  setRegistrationTeam,
   submitUtr,
   validateEventFields,
   validateRegistration,
+  validateTeam,
 } from "../data/registrations.js";
 import { loadMyProfile } from "../data/profiles.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
 import EventSelection from "../components/register/EventSelection.jsx";
+import TeamRoster from "../components/register/TeamRoster.jsx";
 import { loadLookups, setRegistrationEvents } from "../data/staff.js";
 
 /**
@@ -123,6 +127,25 @@ function RejectedUtrForm({ onSubmit, rowId }) {
   );
 }
 
+/* Bounded wait for a save.
+   A `fetch` that never resolves - a dropped connection, a proxy that holds the
+   socket - leaves an `await` pending forever. Without this, the participant sits
+   on the team step with a disabled button and no message at all, which reads as
+   a broken page rather than a network problem, and reloading is the only way out.
+
+   It also cannot say "it failed": the write may well have landed on the server.
+   So the message tells the participant to go BACK and try again rather than
+   promising their team was not saved - and the resume path below re-reads the
+   row, so a team that did save is still there. */
+const SAVE_TIMEOUT_MS = 20000;
+function withTimeout(promise, ms, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 export default function Register() {
   const [searchParams] = useSearchParams();
   // The live view, so a price, cap or payment mode edited in the console is what
@@ -172,6 +195,34 @@ export default function Register() {
   //   details -> select (only when a bundle has pools) -> pay -> utr
   // A plain single-event registration has nothing to choose and skips it.
   const needsSelection = Boolean(bundle?.includes?.some((line) => line.pick));
+
+  /* Does this purchase collect a TEAM ROSTER?
+     A per_team event is one leader paying for a squad, and a squad the database
+     cannot name is a squad the operations team cannot call at the venue. So the
+     leader lists their teammates, up to the event's own cap.
+
+     Read from the catalogue rather than from `entryType === "team"` on purpose:
+     the hackathon is a team event whose team is formed on another site, and
+     asking its leader for teammate details here would collect data nobody on
+     this project will ever use. requiresTeamRoster() is the single definition,
+     so the wizard, the card and the console cannot disagree about which events
+     collect one. */
+  const teamCap = event ? Number(event.maxTeamMembers ?? 0) : 0;
+  const needsTeam = requiresTeamRoster(event);
+
+  /* Cash or UTR, and therefore whether a reference is asked for at all.
+     A cash registration is finished at the confirmation step: there is no QR to
+     scan and nothing to paste, because the money moves at the desk. The same
+     Confirm/Reject pipeline still applies, so the operations team marks it
+     verified when they take the cash - there is no second verification system
+     to maintain. The amount is identical either way.
+
+     Chosen on the DETAILS step rather than on a step of its own, so the step
+     count cannot change after the participant has already seen the progress
+     track. `paid` gates it: a free entry has no method to choose. */
+  const [payMethod, setPayMethod] = useState("utr");
+  const needsUtr = paid && payMethod === "utr";
+  const isCash = paid && payMethod === "cash";
   // The event-specific inputs this purchase has to collect (FREE FIRE's in-game
   // ID today). Read from the catalogue, so the form follows the data and a new
   // event field needs no change here.
@@ -193,6 +244,15 @@ export default function Register() {
   // locally-read fee once a selection has been saved, because that is the figure
   // the payment is reconciled against. Null until then.
   const [confirmedAmount, setConfirmedAmount] = useState(null);
+
+  /* The team the leader is bringing. `members` holds one object per teammate and
+     is the source of truth for the form; the database only ever sees the whole
+     array at once, in one save. There is deliberately no "has the roster been
+     saved" flag: resume asks `loadTeam` instead, which is the database's own
+     answer, and a flag that could disagree with the row is the thing this
+     codebase keeps having to undo. */
+  const [teamName, setTeamName] = useState("");
+  const [members, setMembers] = useState([]);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   /* ---------------- resume + prefill ---------------- */
@@ -293,6 +353,46 @@ export default function Register() {
     setDone(row);
     setConfirmedAmount(null);
 
+    /* The ids in the URL, read ONCE at the top of the decision rather than
+       half way down it. They are the only values that cannot be stale on a cold
+       reload, because they came from the address bar and nothing has had a chance
+       to change them. */
+    const bundleId = searchParams.get("bundle");
+    const eventId = searchParams.get("event");
+
+    /* The method the ROW records, not the one the form happens to be showing.
+       A cash registration resumed into a form defaulting to "utr" would show a
+       reference field for a payment that is never made by reference, and a
+       participant who pasted something into it would be told the row was
+       already registered. The row is the record; the form follows it. */
+    const rowIsCash = row.payment_method === "cash";
+    if (rowIsCash) setPayMethod("cash");
+
+    /* The roster, when this purchase has one. Carried into the form rather than
+       assumed, so a leader who refreshes at the payment step sees their team
+       still listed instead of an empty form that looks like they never entered
+       it. `registration_team` is the database's own shape, and the leader is
+       NOT a member row anywhere - they are this registration - so nothing is
+       prepended here. getEventView merges the live catalogue over the compiled
+       event, which is what carries the cap. */
+    if (eventId && requiresTeamRoster(getEventView(eventId))) {
+      const { data: team } = await loadTeam(row.id);
+      if (team) {
+        setTeamName(team.team_name ?? "");
+        setMembers(
+          (team.members ?? []).map((m) => ({
+            name: m.name ?? "",
+            email: m.email ?? "",
+            roll_number: m.roll_number ?? "",
+            college_name: m.college ?? "",
+            year: m.year ?? "",
+            department: m.department ?? "",
+            phone_number: m.phone_number ?? "",
+          }))
+        );
+      }
+    }
+
     /* Which step this row is waiting on, read from the STORES at the moment of
      * the decision rather than from `paid` and `needsSelection` out of this
      * function's closure.
@@ -311,8 +411,6 @@ export default function Register() {
      * can reach the decision without one. So the values are fetched HERE, from
      * the ids in the URL, which never change and so are always current.
      */
-    const bundleId = searchParams.get("bundle");
-    const eventId = searchParams.get("event");
     const liveBundle = bundleId ? getBundleById(bundleId) : null;
     const paidNow = liveBundle
       ? Number(getBundlePrice(bundleId) ?? 0) > 0
@@ -320,8 +418,16 @@ export default function Register() {
         ? Number(getEventFee(eventId) ?? 0) > 0
         : false;
     const needsNow = Boolean(liveBundle?.includes?.some((line) => line.pick));
+    /* A cash row has no reference to submit and never will, so "utr_number is
+       null" must NOT send a cash registration back to the reference step - that
+       is the bug this branch exists to prevent. It is finished at the desk. */
+    const owesReference = paidNow && !rowIsCash;
 
-    if (row.utr_number || !paidNow) {
+    /* Three ways to be finished: a reference is already on the row, the entry
+       was free, or the money is being paid in cash. All three land on CONFIRM.
+       The cash case is the new one, and testing `utr_number` alone would send a
+       cash registration back to a reference field it can never fill in. */
+    if (row.utr_number || !owesReference) {
       setStep("done");
       return;
     }
@@ -359,7 +465,17 @@ export default function Register() {
   const stepList = [
     { id: "details", label: "YOUR DETAILS" },
     ...(needsSelection ? [{ id: "select", label: "CHOOSE EVENTS" }] : []),
-    ...(paid ? [{ id: "utr", label: "PAYMENT REFERENCE" }] : []),
+    /* The roster comes AFTER the selection and BEFORE payment. After, because
+       the team belongs to the events the participant just chose - a bundle that
+       seats two team events is two squads, and the cap is the tightest of them.
+       Before, because the operations team needs the roster to exist before the
+       money arrives, and a leader who reaches the QR and only then learns they
+       must list teammates has already committed to paying. */
+    ...(needsTeam ? [{ id: "team", label: "YOUR TEAM" }] : []),
+    /* Only a UTR payment asks for a reference. A cash registration goes straight
+       from here to CONFIRM, so it reads as a shorter flow rather than as a
+       payment screen with the reference field mysteriously missing. */
+    ...(needsUtr ? [{ id: "utr", label: "PAYMENT REFERENCE" }] : []),
     { id: "done", label: "CONFIRM" },
   ];
   const stepIndex = Math.max(0, stepList.findIndex((s) => s.id === step));
@@ -439,10 +555,14 @@ export default function Register() {
       return;
     }
     setError("");
-    // A bundle with pools needs the choice made and recorded before the payment
-    // screen, because that screen carries the amount they are about to pay.
-    if (needsSelection) setStep("select");
-    else if (paid) setStep("utr");
+    /* The order out of here follows stepList exactly, so the screen the
+       participant is sent to is always the one the progress track is about to
+       highlight. Routing by hand against a list that can change shape is how a
+       flow ends up pointing at a step that is not in it - which renders no
+       screen at all, with no error. */
+    const after = stepList[stepIndex + 1];
+    if (after && after.id !== "done") setStep(after.id);
+    else if (needsUtr) setStep("utr");
     else finalize(null);
   }
 
@@ -516,7 +636,147 @@ export default function Register() {
     // The refreshed row keeps `mine` honest when we adopted an older one —
     // `created` is what stops us prepending the same registration twice.
     if (!created) setMine((current) => current.map((r) => (r.id === row.id ? row : r)));
-    setStep(paid ? "utr" : "done");
+    setStep(nextAfterSelect());
+  }
+
+  /* Where a bundle's selection sends the participant next.
+     Split out so the selection step and the team step below agree about it
+     without each re-deriving the rule. After choosing events, the next thing is
+     the roster if this purchase collects one, otherwise the reference - and
+     neither if the entry is free. */
+  function nextAfterSelect() {
+    if (needsTeam) return "team";
+    if (needsUtr) return "utr";
+    return "done";
+  }
+
+  /**
+   * Ensure a registration row exists, so a team can be attached to it.
+   *
+   * The same helper in spirit as the selection step's "write the row FIRST"
+   * logic, and for the same reason: registration_members hangs off the row by
+   * foreign key, so a single-event team registration that skipped this would
+   * have nothing to attach the roster to. A refresh between the details step and
+   * here is all it takes, so the lookup happens before every attempt rather than
+   * once on mount.
+   */
+  async function ensureRow() {
+    let row = findMine(form.email, purchase?.ref ?? null);
+    if (row) return { row, created: false };
+
+    const { data: newRow, error: createError } = await addRegistration({
+      ...form,
+      utr_number: null,
+      payment_method: payMethod,
+      purchase_type: purchase?.type ?? null,
+      purchase_label: purchase?.label ?? null,
+      purchase_ref: purchase?.ref ?? null,
+      team_name: teamName.trim() || null,
+      eventFields: extra,
+    });
+    if (createError) return { row: null, created: false, error: createError };
+    setMine((current) => [newRow, ...current]);
+    return { row: newRow, created: true };
+  }
+
+  /**
+   * Save the leader's team, then move on.
+   *
+   * Validated here for the message and by the database for the truth, exactly
+   * as the event selection is. The important detail is what is NOT sent: no
+   * count, no cap, no team size. Those are read server-side from the event the
+   * participant bought, so a form that lied about how many people are allowed
+   * could not get a larger team written.
+   */
+  async function saveTeam(e) {
+    if (e) e.preventDefault();
+    if (saving) return;
+
+    const problem = validateTeam(teamName, members);
+    if (problem) {
+      setError(problem);
+      return;
+    }
+    /* The cap is checked here too, so the leader is told before a round trip -
+     * but it is NOT trusted: the trigger on registration_members refuses an
+     * over-cap roster whatever this form believes. */
+    const allowed = maxTeammatesFor(event);
+    if (allowed != null && members.length > allowed) {
+      setError(
+        `This event allows ${teamCap} people including you, so you can add ${allowed}.`
+      );
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+
+    let row;
+    let rowError = null;
+    try {
+      ({ row, error: rowError } = await withTimeout(
+        ensureRow(),
+        SAVE_TIMEOUT_MS,
+        "That took too long. Go back and try again — if your team was saved it will still be here."
+      ));
+    } catch (err) {
+      setSaving(false);
+      setError(err?.message ?? "That team could not be saved. Please try again.");
+      return;
+    }
+    if (!row) {
+      setSaving(false);
+      // The database's own sentence — "a Free Fire ID is required", a unique
+      // collision — is more useful than anything invented here.
+      setError(rowError ?? "That team could not be saved. Please try again.");
+      return;
+    }
+
+    let result;
+    try {
+      result = await withTimeout(
+        setRegistrationTeam({ registrationId: row.id, teamName, members }),
+        SAVE_TIMEOUT_MS,
+        "That took too long. Go back and try again — if your team was saved it will still be here."
+      );
+    } catch (err) {
+      setSaving(false);
+      setError(err?.message ?? "That team could not be saved. Please try again.");
+      return;
+    }
+    setSaving(false);
+
+    /* The RETURN SHAPE, which was the actual bug here and not anything to do with
+       the network, the guard, or the form.
+
+       setRegistrationTeam resolves `{ data, error }` — the convention every
+       function in registrations.js uses. This branch was testing `result.ok`,
+       which is the convention staff.js uses. `ok` is therefore ALWAYS undefined
+       here, so `!result.ok` was true on every single call: the team saved, the
+       roster was written, the row was created, and the wizard then reported a
+       failure and stayed put.
+
+       So the test is on `error`, which is what this function actually sets. */
+    if (result?.error) {
+      setError(String(result.error));
+      return;
+    }
+
+    setDone(row);
+    /* The next step is read from stepList - the SAME list the progress track is
+       rendered from - rather than recomputed here. Recomputing it is how a flow
+       ends up pointing at a step that is not in its own stepper, which renders
+       no screen at all and reports no error. stepList cannot disagree with
+       itself. */
+    const next = stepList[stepIndex + 1]?.id ?? "done";
+    setStep(next);
+
+    /* A cash or free entry has nothing left after the roster, so the row is
+       written here rather than leaving the participant on a step that would
+       render nothing. A UTR entry still owes a reference, so it waits — and the
+       row just written is passed along, because finalize would otherwise look
+       for it in `mine` and not find the one this very function created. */
+    if (!needsUtr) finalize(null, row);
   }
 
   /**
@@ -538,7 +798,7 @@ export default function Register() {
    * existence check happens BEFORE every insert, not only on the selection
    * path.
    */
-  async function finalize(utrValue) {
+  async function finalize(utrValue, knownRow) {
     if (saving) return;
     setSaving(true);
     setError("");
@@ -557,14 +817,22 @@ export default function Register() {
       return;
     }
 
-    // Already registered under this email and it is MINE (RLS says so): continue
-    // that registration rather than failing to create a duplicate.
-    // The purchase is part of the match. Matching on email alone meant a second,
-    // DIFFERENT purchase was adopted onto the first row and its reference written
-    // there - so a bundle followed by an event left one row, showing the bundle,
-    // carrying the event's UTR. A person may now hold several rows, and each
-    // purchase gets its own.
-    const existing = findMine(form.email, purchase?.ref ?? null);
+    /* Already registered under this email and it is MINE (RLS says so): continue
+     * that registration rather than failing to create a duplicate.
+     * The purchase is part of the match. Matching on email alone meant a second,
+     * DIFFERENT purchase was adopted onto the first row and its reference written
+     * there - so a bundle followed by an event left one row, showing the bundle,
+     * carrying the event's UTR. A person may now hold several rows, and each
+     * purchase gets its own.
+     *
+     * `knownRow` is the one just created by a step above - the team step, which
+     * has to write the registration before it can attach a roster to it. Passing
+     * it in is what stops the insert being attempted a second time: the row was
+     * added with setMine a moment earlier, and React state is not readable from
+     * inside the same tick, so findMine would NOT see it and would collide on
+     * uq_registrations_purchase - telling a leader who had just typed their
+     * whole team that they were "already registered". */
+    const existing = knownRow ?? findMine(form.email, purchase?.ref ?? null);
     if (existing) {
       setDone(existing);
       // Verified seats are settled: nothing to submit, nothing to ask the
@@ -590,9 +858,15 @@ export default function Register() {
     const { data, error: saveError } = await addRegistration({
       ...form,
       utr_number: utrValue,
+      // A cash registration never carries a reference, whatever was typed into
+      // the field. addRegistration enforces that pairing, so the two cannot be
+      // sent together and rejected - the participant is never shown an error
+      // for a combination they could not have chosen deliberately.
+      payment_method: isCash ? "cash" : "utr",
       purchase_type: purchase?.type ?? null,
       purchase_label: purchase?.label ?? null,
       purchase_ref: purchase?.ref ?? null,
+      team_name: teamName.trim() || null,
       eventFields: extra,
     });
 
@@ -743,7 +1017,7 @@ export default function Register() {
                   whether they owe 300 or 1500. */}
               {getEntryType(event) === "team"
                 ? getPaymentMode(event) === "per_team"
-                  ? ` Squad event — one leader registers and pays for the whole squad of up to ${event.maxTeamMembers}. Enter your own in-game ID; the rest of your squad does not register separately.`
+                  ? ` Squad event — you register and pay once for the whole squad of up to ${event.maxTeamMembers} people. On the next screen, add your teammates' details; they do not register separately.`
                   : ` Team event — up to ${event.maxTeamMembers} per team, and each member registers and pays separately. You will be able to form your team once your payment is approved.`
                 : ""}
             </p>
@@ -1009,6 +1283,63 @@ export default function Register() {
                     </div>
                   ))}
 
+                  {/* CASH OR UPI, chosen here rather than on a step of its own.
+                      Two reasons it is not its own step: the progress track would
+                      change length after the participant had already read it, and
+                      a screen with two buttons and nothing else is a worse place
+                      to make the decision than the form the money belongs to.
+
+                      Cash skips the QR and the reference entirely, so a cash
+                      registration ends on CONFIRM having paid nothing yet - the
+                      operations team marks it verified when they take the money
+                      at the desk. The AMOUNT is identical either way, so the
+                      choice is only about how the money arrives. */}
+                  {paid ? (
+                    <fieldset id="reg-paymethod" className="flex flex-col gap-3">
+                      <legend className={labelClass}>How would you like to pay?</legend>
+                      {[
+                        {
+                          id: "utr",
+                          label: "Pay by UPI now",
+                          help: "Scan the QR on the next screen and paste your UTR reference.",
+                        },
+                        {
+                          id: "cash",
+                          label: "Pay cash at the venue",
+                          help: "Nothing to scan. Hand the fee to the NEXUS desk when you arrive, and we will mark it paid.",
+                        },
+                      ].map((option) => (
+                        <label
+                          key={option.id}
+                          htmlFor={`reg-pay-${option.id}`}
+                          className={`flex cursor-pointer items-start gap-3 border px-4 py-3 transition-colors ${
+                            payMethod === option.id
+                              ? "border-lavender/70 bg-violet-bright/10"
+                              : "border-lavender/20 hover:border-lavender/50"
+                          }`}
+                        >
+                          <input
+                            id={`reg-pay-${option.id}`}
+                            data-action={`reg-pay-${option.id}`}
+                            type="radio"
+                            name="payment_method"
+                            className="mt-1"
+                            checked={payMethod === option.id}
+                            onChange={() => setPayMethod(option.id)}
+                          />
+                          <span>
+                            <span className="block text-sm tracking-wide text-crystal">
+                              {option.label}
+                            </span>
+                            <span className="mt-1 block text-[11px] text-crystal/45">
+                              {option.help}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </fieldset>
+                  ) : null}
+
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-5">
                     <Link
                       to={returnTo}
@@ -1017,7 +1348,11 @@ export default function Register() {
                       ← Back
                     </Link>
                     <CinematicButton type="submit" id="reg-details-next">
-                      {paid ? "Continue to payment" : "Confirm registration"}
+                      {paid && !needsUtr
+                        ? "Confirm registration"
+                        : paid
+                          ? "Continue to payment"
+                          : "Confirm registration"}
                     </CinematicButton>
                   </div>
                 </form>
@@ -1060,6 +1395,64 @@ export default function Register() {
                     ← Back
                   </button>
                 </div>
+              ) : null}
+
+              {/* --------------- step 3 (conditional): the team --------------- */}
+              {signedIn && step === "team" && needsTeam ? (
+                <form id="reg-step-team" onSubmit={saveTeam} noValidate className="flex flex-col gap-6">
+                  <header>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">{stepNumber}</p>
+                    <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
+                      YOUR TEAM
+                    </h2>
+                  </header>
+                  <p className="text-sm leading-relaxed text-crystal/60">
+                    You are paying for the whole squad, so tell us who is in it.
+                    Your own seat is already recorded — this is everybody else, up
+                    to {teamCap} people in total.
+                  </p>
+
+                  <TeamRoster
+                    cap={teamCap}
+                    teamName={teamName}
+                    members={members}
+                    lookups={lookups}
+                    error={error}
+                    onChange={(next) => {
+                      setTeamName(next.teamName);
+                      setMembers(next.members);
+                    }}
+                  />
+
+                  <div className="flex flex-wrap items-center gap-5">
+                    {/* An explicit onClick, NOT relying on the browser routing a
+                        submit button through the form's submit event. The DOM
+                        here is correct — the button is inside the form, and the
+                        form has an onSubmit — but "the handler never visibly
+                        runs" is the hardest class of bug to diagnose precisely
+                        because nothing is wrong in either place you look.
+                        Calling the function directly removes that whole
+                        dependency, and the form is kept for Enter-key submits.
+                        `type="button"` so the click is not ALSO submitted. */}
+                    <button
+                      type="button"
+                      onClick={() => saveTeam()}
+                      data-action="save-team"
+                      disabled={saving}
+                      className="border border-lavender/60 px-6 py-3 text-[10px] font-medium uppercase tracking-[0.28em] text-crystal transition-colors duration-300 hover:border-lavender disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {saving ? "Saving…" : needsUtr ? "Save team and continue" : "Save team"}
+                    </button>
+                    <button
+                      type="button"
+                      id="reg-team-back"
+                      onClick={stepBack}
+                      className="text-[10px] uppercase tracking-[0.35em] text-crystal/40 transition-colors hover:text-lavender"
+                    >
+                      ← Back
+                    </button>
+                  </div>
+                </form>
               ) : null}
 
               {/* ------------- payment: the QR and the reference are one step ------------- */}

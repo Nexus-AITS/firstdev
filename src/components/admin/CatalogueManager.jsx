@@ -15,7 +15,7 @@
  * code is not, and the wrapper functions already translate the common cases.
  */
 import { useCallback, useEffect, useState } from "react";
-import { ENTRY_TYPES, PAYMENT_MODES } from "../../data/events.js";
+import { ENTRY_TYPES } from "../../data/events.js";
 import {
   loadPublicCatalogue,
   can as roleCan,
@@ -56,7 +56,10 @@ const emptyEvent = {
   // null (not "") is what the RPC reads as unlimited.
   max_registrations: "",
   price: "",
-  payment_mode: "per_person",
+  // Not a payment_mode any more. The fact is "is this team formed elsewhere",
+  // and the database derives who pays from it (migration ...028). False means
+  // the leader pays once and lists their teammates here.
+  team_formed_offsite: false,
   team_form_url: "",
   status: "REGISTRATION OPEN",
   is_active: true,
@@ -80,7 +83,10 @@ function toEventForm(row) {
     entry_type: row.entry_type === "team" ? "team" : "individual",
     max_team_members: row.max_team_members ?? "",
     max_registrations: row.max_registrations ?? "",
-    payment_mode: row.payment_mode === "per_team" ? "per_team" : "per_person",
+    // `payment_mode` is deliberately NOT read back into the form: it is derived
+    // in the database now, and an editor that displayed it would be showing an
+    // operator a value they can no longer change.
+    team_formed_offsite: row.team_formed_offsite === true,
     team_form_url: row.team_form_url ?? "",
     // The price lives in public.pricing, not on the event row, so it arrives on
     // the catalogue object as `price` (public_catalogue joins it on). Blank when
@@ -147,15 +153,17 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
 
   // Flipping to Individual clears the cap rather than leaving a number behind a
   // field that is no longer on screen — it would otherwise go back to the server
-  // as a value the operator cannot see and did not intend. It also drops
-  // per_team payment, because a squad price with no squad size is refused by the
-  // RPC, and a form that can reach an unsaveable state is a trap.
+  // as a value the operator cannot see and did not intend. It also clears the
+  // off-site flag, because a team formed on another website is meaningless for
+  // an event nobody enters as a team, and a stale true would make a solo event
+  // look like it charges per person for no reason the operator can see.
   const setEntryType = (e) =>
     setForm((f) => ({
       ...f,
       entry_type: e.target.value,
       max_team_members: e.target.value === "team" ? f.max_team_members : "",
-      payment_mode: e.target.value === "team" ? f.payment_mode : "per_person",
+      team_formed_offsite:
+        e.target.value === "team" ? f.team_formed_offsite : false,
     }));
 
   function edit(row) {
@@ -198,7 +206,11 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
         // Clearing a price is done in the Pricing tab, where "no price" is
         // something an operator can see and choose.
         price: form.price === "" ? null : Number(form.price),
-        payment_mode: form.payment_mode,
+        // The FACT, not the derived mode. The RPC recomputes payment_mode from
+        // this and entry_type, so an old console tab still posting a
+        // payment_mode cannot put a team event back on per-person payment.
+        team_formed_offsite:
+          form.entry_type === "team" ? !!form.team_formed_offsite : false,
         team_form_url: form.team_form_url.trim() === "" ? null : form.team_form_url.trim(),
         status: form.status.trim(),
         is_active: form.is_active,
@@ -441,24 +453,35 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
           </div>
         </div>
         {form.entry_type === "team" ? (
+          /* "Who pays" is NO LONGER A CHOICE, and that is the point of this
+             control replacing a select.
+             A team event is paid for by the team, so the only question an
+             operator has is the exception: is the team formed on ANOTHER
+             website? If it is, every member settles their own seat over there
+             and this site collects no teammate list at all. That is the
+             hackathon, and it is why this is one checkbox rather than two
+             radio buttons that could be set to something impossible.
+             payment_mode is derived from this flag and entry_type in the
+             database (migration ...028), so it cannot drift. */
           <div>
-            <label className={labelClass} htmlFor="cat-event-paymode">Who pays</label>
-            <select
-              id="cat-event-paymode"
-              data-action="cat-event-paymode"
-              className={`mt-1 ${inputClass}`}
-              value={form.payment_mode}
-              onChange={set("payment_mode")}
-            >
-              {PAYMENT_MODES.map((m) => (
-                <option key={m.id} value={m.id}>{m.label}</option>
-              ))}
-            </select>
-            <p className="mt-1 font-mono text-[10px] text-ash">
-              {form.payment_mode === "per_team"
-                ? "One registration covers the squad and the leader pays this once for all of them."
-                : "Every participant registers and pays this themselves; any team is formed afterwards."}
-            </p>
+            <label className={labelClass} htmlFor="cat-event-offsite">
+              Team formed on another website
+            </label>
+            <label className="mt-2 flex items-start gap-2 font-mono text-[12px] text-bone">
+              <input
+                id="cat-event-offsite"
+                data-action="cat-event-offsite"
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!form.team_formed_offsite}
+                onChange={set("team_formed_offsite")}
+              />
+              <span>
+                Tick this when each member pays their own fee and the team is
+                assembled somewhere else. Leave it unticked and the leader pays
+                once for the whole squad and lists their teammates here.
+              </span>
+            </label>
           </div>
         ) : null}
         <div>

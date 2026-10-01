@@ -318,6 +318,18 @@ export async function addRegistration(input) {
   }
 
   const hasUtr = input.utr_number != null && String(input.utr_number).trim() !== "";
+  /* CASH vs UTR, decided once, at signup.
+     A cash registration has no reference and never will - the money moves at
+     the desk - so it is stored as awaiting_cash rather than reusing
+     awaiting_utr, which would put "awaiting UTR" on the roster beside somebody
+     who will never paste one. The two states are mutually exclusive and the
+     table CHECK refuses a cash row carrying a reference, so this cannot produce
+     a row that claims to have been paid electronically.
+
+     The method is NOT changeable afterwards: the guard trigger does not let a
+     participant move a row between the two, and that is deliberate. A
+     participant who picks wrong asks the operations team. */
+  const isCash = input.payment_method === "cash";
   const row = {
     name: String(input.name).trim(),
     roll_number: String(input.roll_number).trim(),
@@ -326,8 +338,9 @@ export async function addRegistration(input) {
     department: String(input.department).trim(),
     phone_number: String(input.phone_number).trim(),
     email: String(input.email).trim().toLowerCase(),
-    payment_status: hasUtr ? "unverified" : "awaiting_utr",
-    utr_number: hasUtr ? String(input.utr_number).trim() : null,
+    payment_method: isCash ? "cash" : "utr",
+    payment_status: isCash ? "awaiting_cash" : hasUtr ? "unverified" : "awaiting_utr",
+    utr_number: isCash ? null : hasUtr ? String(input.utr_number).trim() : null,
     purchase_type: input.purchase_type ?? null,
     purchase_label: input.purchase_label ?? null,
     // The catalogue id (?event= / ?bundle=), so the profile page can hand the
@@ -335,6 +348,11 @@ export async function addRegistration(input) {
     // new, and a null here simply means "no resume target" rather than a
     // guessed one.
     purchase_ref: input.purchase_ref ?? null,
+    // The team this leader brings, for an event whose team is formed here.
+    // Sent on the insert rather than in a second call so a resumed leader
+    // cannot end up with a registration that is missing the name they already
+    // typed. Null on every individual event.
+    team_name: input.team_name ? String(input.team_name).trim() : null,
     // Event-specific inputs, e.g. the in-game Free Fire ID.
     ...declaredEventFieldValues(input.purchase_ref, input.eventFields),
   };
@@ -454,3 +472,151 @@ export async function listMyRegistrationsDetailed() {
   }));
   return { data: rows, error: null };
 }
+
+
+/* ---------- the team a leader brings ---------- */
+
+/**
+ * Check one teammate, in the browser, against the same rules the table holds
+ * them to.
+ *
+ * A convenience, never the control — registration_set_team_members re-checks
+ * every field and trg_registration_members_cap re-checks the size, so a client
+ * that skipped this would still be refused. What this buys is a message in the
+ * leader's own language while they are still typing, instead of a 23514 after
+ * they press save.
+ *
+ * `position` is 1-based and names WHICH teammate is wrong, because "a field is
+ * invalid" on a list of four is not something anybody can act on.
+ */
+export function validateTeamMember(member, position) {
+  const t = (s) => String(s ?? "").trim();
+  const who = `Teammate ${position}`;
+  if (t(member.name).length < 2 || t(member.name).length > 120)
+    return `${who}: name must be 2–120 characters.`;
+  if (t(member.roll_number).length < 3 || t(member.roll_number).length > 40)
+    return `${who}: roll number must be 3–40 characters.`;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(t(member.email)))
+    return `${who}: enter a valid email address.`;
+  if (t(member.college_name).length < 2 || t(member.college_name).length > 160)
+    return `${who}: college must be 2–160 characters.`;
+  if (!["1st", "2nd", "3rd", "4th"].includes(member.year))
+    return `${who}: select an academic year.`;
+  if (t(member.department).length < 2 || t(member.department).length > 80)
+    return `${who}: department must be 2–80 characters.`;
+  const phone = t(member.phone_number);
+  if (phone && (phone.length < 8 || phone.length > 15 || !/^[+0-9][0-9 -]*[0-9]$/.test(phone)))
+    return `${who}: phone must be 8–15 chars, or leave it blank.`;
+  return null;
+}
+
+/**
+ * The whole roster at once, so a leader fixing one mistake is told about all of
+ * them rather than one per attempt.
+ */
+export function validateTeam(teamName, members) {
+  const name = String(teamName ?? "").trim();
+  if (name.length < 2 || name.length > 60)
+    return "Give the team a name of 2 to 60 characters.";
+  for (let i = 0; i < members.length; i += 1) {
+    const problem = validateTeamMember(members[i], i + 1);
+    if (problem) return problem;
+  }
+  const seen = new Set();
+  for (let i = 0; i < members.length; i += 1) {
+    const email = String(members[i]?.email ?? "").trim().toLowerCase();
+    if (seen.has(email)) return `${email} appears twice in the teammate list.`;
+    seen.add(email);
+  }
+  return null;
+}
+
+
+/**
+ * Save a leader's team: the name, and every teammate, in one call.
+ *
+ * The browser sends FACTS. It does not send how many teammates there are, what
+ * the cap is, or what the team size works out to — the database reads those from
+ * the catalogue and enforces the cap on the table, so a client cannot talk its
+ * way past a team of three.
+ *
+ * Replaces the whole roster rather than appending, so a leader who mistypes a
+ * roll number fixes it with one save and the list on screen is the list on disk.
+ */
+export async function setRegistrationTeam({ registrationId, teamName, members }) {
+  const { supabase, error } = await client();
+  if (error) return { data: null, error };
+
+  const { data, error: callError } = await supabase.rpc("registration_set_team_members", {
+    p_registration_id: registrationId,
+    // Only the fields the database reads. Anything else a caller put in the
+    // object is dropped here rather than arriving as an unknown key.
+    p_members: (members ?? []).map((m) => ({
+      name: String(m?.name ?? "").trim(),
+      roll_number: String(m?.roll_number ?? "").trim(),
+      email: String(m?.email ?? "").trim().toLowerCase(),
+      college_name: String(m?.college_name ?? "").trim(),
+      year: m?.year ?? "",
+      department: String(m?.department ?? "").trim(),
+      phone_number: String(m?.phone_number ?? "").trim() || null,
+    })),
+    p_team_name: String(teamName ?? "").trim(),
+  });
+
+  if (callError) return { data: null, error: explainTeamError(callError) };
+  const body = Array.isArray(data) ? data[0] : data;
+  return { data: body ?? null, error: null };
+}
+
+/**
+ * Turn a team rejection into something a leader can act on.
+ *
+ * The database raises 22023 with a sentence written for a human — "A team may
+ * have at most 3 people and the leader counts as one, so you can add 2" — so
+ * that text is passed through rather than replaced. Replacing it with something
+ * generic would throw away the one message that explains the rule.
+ */
+function explainTeamError(error) {
+  const message = String(error?.message ?? "");
+  if (
+    error?.code === "22023" ||
+    /at most|leader counts|is missing|appears twice|not a team|is not yours|is final|2 to 60/i.test(
+      message
+    )
+  ) {
+    return message.replace(/^.*?:\s*/, "") || "That team could not be saved.";
+  }
+  if (error?.code === "42501") {
+    return message.replace(/^.*?:\s*/, "") || "That team can no longer be changed.";
+  }
+  if (error?.code === "23514") {
+    return message.replace(/^.*?:\s*/, "") || "That team is larger than the event allows.";
+  }
+  return "That team could not be saved. Please try again.";
+}
+
+/**
+ * One registration's team: the name, the cap, the leader and the members.
+ *
+ * Read through registration_team() rather than a select on registration_members
+ * so the SHAPE is the database's — the same shape the operations console and
+ * the partner API both render, which is the point of having one function own
+ * it. RLS scopes it to a registration the signed-in participant owns.
+ */
+export async function loadTeam(registrationId) {
+  const { supabase, error } = await client();
+  if (error) return { data: null, error };
+
+  const { data, error: queryError } = await supabase.rpc("registration_team", {
+    p_registration_id: registrationId,
+  });
+  if (queryError) {
+    return { data: null, error: explain(queryError, "Could not load your team") };
+  }
+  const body = Array.isArray(data) ? data[0] : data;
+  // No team for this purchase - an individual event, or the hackathon. Null
+  // rather than an empty object, so a caller can tell "no team here" from
+  // "this person's team is empty".
+  return { data: body ?? null, error: null };
+}
+

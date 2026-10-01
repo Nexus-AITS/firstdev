@@ -2,7 +2,13 @@ import { Link } from "react-router-dom";
 import Reveal from "../ui/Reveal.jsx";
 import CrystalSigil from "../event/CrystalSigil.jsx";
 import Seats from "../event/Seats.jsx";
-import { formatEventFee, formatEntryType, getEventFee, getPaymentMode } from "../../data/events.js";
+import {
+  formatEventFee,
+  formatEntryType,
+  formatPaymentMode,
+  getEventFee,
+  paymentNote,
+} from "../../data/events.js";
 import usePricing from "../../hooks/usePricing.js";
 
 const SHIFTS = ["", "md:ml-[7%]", "md:ml-[13%]", "md:ml-[4%]", "md:ml-[10%]"];
@@ -65,7 +71,18 @@ export default function ParadoxCard({ event, index = 0 }) {
               {fee != null ? (
                 <p className="mt-5 text-[11px] font-medium uppercase tracking-[0.34em] text-gold/85 [text-shadow:0_0_16px_rgba(245,215,142,0.35)]">
                   {formatEventFee(event.id)} · {formatEntryType(event)}
-                  {getPaymentMode(event) === "per_team" ? " · per team" : ""}
+                  {/* WHO pays, whenever the event is entered as a TEAM. This line
+                      used to speak only for a squad, which left a per-person team
+                      printing a bare cap and a bare price — the exact ambiguity
+                      that made a five-person hackathon read as "Rs 349 for the
+                      team". */}
+                  {formatPaymentMode(event) ? ` · ${formatPaymentMode(event)}` : ""}
+                </p>
+              ) : null}
+
+              {paymentNote(event) ? (
+                <p className="mt-2 text-[11px] leading-relaxed tracking-wide text-crystal/45">
+                  {paymentNote(event)}
                 </p>
               ) : null}
 

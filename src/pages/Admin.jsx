@@ -24,6 +24,7 @@ import {
   staffCreate,
   staffDeleteRegistration,
   staffExportRegistrations,
+  staffFilterOptions,
   staffListAudit,
   staffListPricing,
   staffListRegistrations,
@@ -36,6 +37,7 @@ import {
   staffSetSelectionFreeze,
   staffSetStatus,
   staffUpdate,
+  loadLookups,
   loadPublicCatalogue,
 } from "../data/staff.js";
 import { buildRosterWorkbook, downloadXlsx } from "../lib/xlsx.js";
@@ -43,6 +45,7 @@ import Select from "../components/ui/Select.jsx";
 import DateField from "../components/ui/DateField.jsx";
 import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import ContactManager from "../components/admin/ContactManager.jsx";
+import DestinationManager from "../components/admin/DestinationManager.jsx";
 import LookupManager from "../components/admin/LookupManager.jsx";
 import FinanceStrip from "../components/admin/FinanceStrip.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
@@ -66,6 +69,12 @@ const TABS = [
   // Contact channels are admin+ (the operations team that verifies payments is
   // the team that answers the phone), matching the RPC's own gate.
   { id: "contacts", label: "Contacts", action: "manage_contacts" },
+  // Where the roster is sent, and the keys a partner system reads it with.
+  // Gated on manage_contacts (admin+) rather than manage_catalogue, because
+  // sending data OUT is a decision about participant privacy, not about the
+  // event catalogue — the same reasoning that put contacts with the team that
+  // answers the phone. The database re-checks the real gate per RPC.
+  { id: "destinations", label: "Destinations", action: "manage_contacts" },
   // Colleges and departments are admin+ to edit, for the same reason contacts
   // are: the team that takes registrations is the team that knows the colleges.
   { id: "lookups", label: "Colleges", action: "manage_contacts" },
@@ -131,6 +140,13 @@ const DEFAULT_PAGING = {
     event: "all",
     fromDate: "",
     toDate: "",
+    // College, year and department. Columns on registrations, so the roster can
+    // narrow to them in SQL — the operator's question is very often "everyone
+    // from CSIT who is in their 2nd year", and the free-text search cannot
+    // express that without matching a substring of each field separately.
+    college: "all",
+    year: "all",
+    department: "all",
   },
   audit: { page: 1, pageSize: 25, action: "all" },
   staff: { page: 1, pageSize: 25 },
@@ -453,6 +469,44 @@ function RosterTab({
   const [notice, setNotice] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
+  /* The college and department lists for the filters.
+     Read from public_lookups(), the SAME list the registration form offers, so a
+     filter can never contain a value the form does not and an operator cannot
+     narrow to a college nobody has ever registered from.
+
+     Fetched once and deliberately not awaited by anything that renders: the
+     roster is the page an operator lands on mid-shift, and a spinner there is
+     worse than three filters that fill in a moment later. An empty list simply
+     renders "All colleges" alone, which is a truthful answer, not a broken
+     control. */
+  /* What the three filters can actually match, each with a registration COUNT.
+     Read from staff_filter_options(), NOT from the registration form's lookup
+     list — those are two different populations. The form offers 17 colleges;
+     only 3 have anybody registered. Picking one with nobody used to produce an
+     empty roster that looked exactly like a broken filter, and the natural
+     conclusion is that the filter does not work. Showing "(0)" turns that into
+     an honest answer.
+
+     Fetched once and deliberately not awaited by anything that renders: the
+     roster is the page an operator lands on mid-shift, and a spinner there is
+     worse than three filters that fill in a moment later. */
+  const [lookups, setLookups] = useState({ colleges: [], departments: [], years: [] });
+  useEffect(() => {
+    let alive = true;
+    staffFilterOptions(token).then((result) => {
+      if (alive && result.ok) {
+        setLookups({
+          colleges: result.colleges,
+          departments: result.departments,
+          years: result.years,
+        });
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
+
   /* The text box is the operator's own state; the query it triggers belongs to
      the database.
 
@@ -550,6 +604,15 @@ function RosterTab({
       toDate: paging.toDate || null,
       event: paging.event ?? "all",
       status: paging.status ?? "all",
+      /* The college / year / department filters go into the export too. The sheet
+         and the roster on screen are the same question asked twice: an operator
+         who narrows to one college and presses Download must get that college's
+         sheet. Exporting everything while the screen showed one college is the
+         kind of mistake that reconciles a payment sheet against the wrong people
+         and is not noticed until the money does not add up. */
+      college: paging.college ?? "all",
+      year: paging.year ?? "all",
+      department: paging.department ?? "all",
     });
     setExporting(false);
 
@@ -584,10 +647,17 @@ function RosterTab({
 
   // Every one of these narrows the set, and each has to count as "filtering" or
   // the summary line would read "Newest first" over a filtered result.
+  /* Every one of these narrows the set, and each has to count as "filtering" or
+     the summary line would read "Newest first" over a filtered result. The three
+     new ones are here for that reason alone — a filter that works but does not
+     change the label is how an operator concludes it did nothing. */
   const filtering =
     paging.query.trim() !== "" ||
     paging.status !== "all" ||
     paging.event !== "all" ||
+    paging.college !== "all" ||
+    paging.year !== "all" ||
+    paging.department !== "all" ||
     Boolean(paging.fromDate) ||
     Boolean(paging.toDate);
 
@@ -696,6 +766,95 @@ function RosterTab({
           </div>
         </div>
 
+        {/* College, year and department. Columns on registrations, so these are
+            exact matches in SQL rather than something the browser filters over
+            the loaded page — the whole point being that "CSIT, 2nd year" finds
+            the person who is not on the page currently on screen.
+
+            Driven by public_lookups(), the same lists the registration form
+            offers, so a filter can never name a college nobody has registered
+            from. YEAR is a closed set of four, so it is written out here rather
+            than read from a table the column CHECK already guarantees. */}
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label
+              htmlFor="roster-college"
+              className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash"
+            >
+              College
+            </label>
+            <div className="mt-2">
+              <Select
+                id="roster-college"
+                data-action="roster-college"
+                value={paging.college}
+                onChange={(value) => setFilter({ college: value })}
+                options={[
+                  { value: "all", label: "All colleges" },
+                  /* The count is the whole reason this control reads the way it
+                     does. "Sri Venkateswara College of Engineering (SVCE) (0)"
+                     says "nobody has registered from there yet"; the same college
+                     with no number says "the filter is broken", and the operator
+                     cannot tell which they are looking at. */
+                  ...lookups.colleges.map((c) => ({
+                    value: c.name,
+                    label: `${c.name} (${c.count ?? 0})`,
+                  })),
+                ]}
+                className="w-[15rem]"
+              />
+            </div>
+          </div>
+          <div>
+            <label
+              htmlFor="roster-year"
+              className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash"
+            >
+              Year
+            </label>
+            <div className="mt-2">
+              <Select
+                id="roster-year"
+                data-action="roster-year"
+                value={paging.year}
+                onChange={(value) => setFilter({ year: value })}
+                options={[
+                  { value: "all", label: "All years" },
+                  ...lookups.years.map((y) => ({
+                    value: y.name,
+                    label: `${y.name} (${y.count ?? 0})`,
+                  })),
+                ]}
+                className="w-[10rem]"
+              />
+            </div>
+          </div>
+          <div>
+            <label
+              htmlFor="roster-department"
+              className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash"
+            >
+              Department
+            </label>
+            <div className="mt-2">
+              <Select
+                id="roster-department"
+                data-action="roster-department"
+                value={paging.department}
+                onChange={(value) => setFilter({ department: value })}
+                options={[
+                  { value: "all", label: "All departments" },
+                  ...lookups.departments.map((d) => ({
+                    value: d.name,
+                    label: `${d.name} (${d.count ?? 0})`,
+                  })),
+                ]}
+                className="w-[15rem]"
+              />
+            </div>
+          </div>
+        </div>
+
         {/* Calendar dates, not timestamps. The data layer appends the +05:30 day
             boundary itself; sending a full ISO instant from the browser would
             hand Postgres a UTC value and quietly cut the day at 05:30 IST.
@@ -742,6 +901,9 @@ function RosterTab({
                   query: "",
                   status: "all",
                   event: "all",
+                  college: "all",
+                  year: "all",
+                  department: "all",
                   fromDate: "",
                   toDate: "",
                 })
@@ -1873,6 +2035,10 @@ function Console({ session, onExpired }) {
         {/* Same shape of ownership as the catalogue: the contacts tab loads and
             saves itself, so it takes no window, pager or reload wiring. */}
         {active?.id === "contacts" ? <ContactManager session={session} /> : null}
+
+        {/* Same shape of ownership as the catalogue and contacts: the tab loads
+            and saves itself, so it takes no window, pager or reload wiring. */}
+        {active?.id === "destinations" ? <DestinationManager session={session} /> : null}
 
       {active?.id === "lookups" ? <LookupManager session={session} /> : null}
       </div>
