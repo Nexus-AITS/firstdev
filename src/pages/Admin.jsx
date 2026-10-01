@@ -469,16 +469,6 @@ function RosterTab({
   const [notice, setNotice] = useState(null);
   const [busyId, setBusyId] = useState(null);
 
-  /* The college and department lists for the filters.
-     Read from public_lookups(), the SAME list the registration form offers, so a
-     filter can never contain a value the form does not and an operator cannot
-     narrow to a college nobody has ever registered from.
-
-     Fetched once and deliberately not awaited by anything that renders: the
-     roster is the page an operator lands on mid-shift, and a spinner there is
-     worse than three filters that fill in a moment later. An empty list simply
-     renders "All colleges" alone, which is a truthful answer, not a broken
-     control. */
   /* What the three filters can actually match, each with a registration COUNT.
      Read from staff_filter_options(), NOT from the registration form's lookup
      list — those are two different populations. The form offers 17 colleges;
@@ -493,7 +483,12 @@ function RosterTab({
   const [lookups, setLookups] = useState({ colleges: [], departments: [], years: [] });
   useEffect(() => {
     let alive = true;
-    staffFilterOptions(token).then((result) => {
+    /* session.token, NOT a bare `token`. This component destructures `session`,
+       not `token` — a bare identifier is a ReferenceError at runtime that
+       esbuild does NOT catch, because it never resolves free identifiers. It
+       took the whole Roster tab down while `npm run build` stayed green, which
+       is the second time that has bitten in this codebase. */
+    staffFilterOptions(session.token).then((result) => {
       if (alive && result.ok) {
         setLookups({
           colleges: result.colleges,
@@ -505,7 +500,7 @@ function RosterTab({
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [session.token]);
 
   /* The text box is the operator's own state; the query it triggers belongs to
      the database.
