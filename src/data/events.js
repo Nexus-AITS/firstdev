@@ -611,6 +611,7 @@ const LIVE_OVERRIDES = [
   ["team_formed_offsite", "teamFormedOffsite"],
   ["status", "status"],
   ["price", "livePrice"],
+  ["registration_closes_on", "registrationClosesOn"],
 ];
 
 /**
@@ -624,12 +625,17 @@ const LIVE_OVERRIDES = [
  *   team_form_url      null means "this event has no team-formation step". A
  *                      compiled fallback would re-add a link to a destination
  *                      somebody deliberately removed.
+ *   registration_closes_on
+ *                      null means "no deadline" (migration ...034). It is
+ *                      BLANKABLE rather than an override because there is no
+ *                      compiled fallback worth keeping: an offline build must
+ *                      not invent a date the database never set.
  *
  * Everything in LIVE_OVERRIDES still refuses a blank, because there a blank
  * means the row predates the column (a console edit on an older schema) and the
  * compiled copy is a better answer than an empty venue.
  */
-const BLANKABLE = new Set(["maxRegistrations", "teamFormUrl"]);
+const BLANKABLE = new Set(["maxRegistrations", "teamFormUrl", "registrationClosesOn"]);
 
 /**
  * The event as the site should render it RIGHT NOW: the compiled-in shape with
@@ -670,11 +676,67 @@ export function getEventView(eventOrId) {
   for (const [column, field] of [
     ["max_registrations", "maxRegistrations"],
     ["team_form_url", "teamFormUrl"],
+    ["registration_closes_on", "registrationClosesOn"],
   ]) {
     if (BLANKABLE.has(field)) out[field] = live[column] ?? null;
   }
   out.registeredCount = Number.isInteger(live.registered_count) ? live.registered_count : null;
   return out;
+}
+
+/**
+ * Today in Asia/Kolkata as a plain calendar day, "YYYYMMDD" for comparison.
+ *
+ * Deliberately NOT `toLocaleDateString("en-CA")` here: this module is imported by
+ * the offline seed path and the console alike, and the IST offset is spelled out
+ * so the answer does not depend on the machine's timezone the way a bare
+ * `new Date()` comparison would.
+ */
+function istTodayKey() {
+  const now = new Date();
+  const ist = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60000);
+  return `${ist.getFullYear()}${String(ist.getMonth() + 1).padStart(2, "0")}${String(
+    ist.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * Has registration closed for this event? null when there is no deadline.
+ *
+ * The SAME comparison trg_event_registration_cap makes, in the same zone and
+ * with the same strict inequality - "closes on 5 Oct" includes 5 Oct. This is a
+ * convenience for the page, never the authority: a participant who sees false
+ * here can still be refused at the database, and that is correct.
+ */
+export function isRegistrationClosed(eventOrId) {
+  const view = typeof eventOrId === "string" ? getEventView(eventOrId) : eventOrId;
+  const closes = view?.registrationClosesOn;
+  if (!closes) return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(closes).trim());
+  if (!m) return false;
+  return `${m[1]}${m[2]}${m[3]}` < istTodayKey();
+}
+
+/**
+ * "Registration closed on 5 Oct 2026", or null when there is no deadline.
+ *
+ * Assembled from the three numbers in the value, never through `new Date(...)`:
+ * "2026-10-05" is midnight UTC, and formatting that back in IST prints the 4th.
+ * A one-day error on a closing date is how somebody misses a registration they
+ * were entitled to.
+ */
+export function formatRegistrationCloses(eventOrId) {
+  const view = typeof eventOrId === "string" ? getEventView(eventOrId) : eventOrId;
+  const closes = view?.registrationClosesOn;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(closes ?? "").trim());
+  if (!m) return null;
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // Group 2 is the MONTH, group 3 the DAY. Reading them the other way round
+  // renders "5 Oct 2026" as "31 Oct 2026".
+  const month = months[Number(m[2]) - 1];
+  if (!month) return null;
+  return `${Number(m[3])} ${month} ${m[1]}`;
 }
 
 /**

@@ -16,6 +16,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { ENTRY_TYPES } from "../../data/events.js";
+import DateField from "../ui/DateField.jsx";
 import {
   loadPublicCatalogue,
   can as roleCan,
@@ -55,6 +56,10 @@ const emptyEvent = {
   // Blank means "no limit", which is the state every event starts in. Sending
   // null (not "") is what the RPC reads as unlimited.
   max_registrations: "",
+  // Same rule for the deadline: blank is OPEN, not "closed today". The column is
+  // a calendar day (migration ...034), so the form carries a plain YYYY-MM-DD
+  // and the database compares it in Asia/Kolkata - never as an instant.
+  registration_closes_on: "",
   price: "",
   // Not a payment_mode any more. The fact is "is this team formed elsewhere",
   // and the database derives who pays from it (migration ...028). False means
@@ -83,6 +88,10 @@ function toEventForm(row) {
     entry_type: row.entry_type === "team" ? "team" : "individual",
     max_team_members: row.max_team_members ?? "",
     max_registrations: row.max_registrations ?? "",
+    // The database stores a `date`, which PostgREST serialises as a bare
+    // YYYY-MM-DD - the exact shape DateField parses. The `?? ""` is for a row
+    // that predates migration ...034 and has no deadline at all.
+    registration_closes_on: row.registration_closes_on ?? "",
     // `payment_mode` is deliberately NOT read back into the form: it is derived
     // in the database now, and an editor that displayed it would be showing an
     // operator a value they can no longer change.
@@ -118,7 +127,47 @@ function entryLabel(row) {
       ? "no limit"
       : `${row.registered_count ?? 0}/${row.max_registrations}${perTeam ? " squads" : ""}`;
   const who = perTeam ? "squad pays" : "per person";
-  return `${type} · ${who} · ${seats} · ${row.price == null ? "NO PRICE" : `₹${row.price}`}`;
+  // The last day is printed beside the cap because the two are the same
+  // sentence: "12/20 squads, closes 5 Oct" tells an operator whether the number
+  // is a running total or a closed book. A deadline in the PAST says so
+  // explicitly rather than reading as a date that has not arrived.
+  const closes = closeLabel(row.registration_closes_on);
+  return `${type} · ${who} · ${seats}${closes ? ` · ${closes}` : ""} · ${
+    row.price == null ? "NO PRICE" : `₹${row.price}`
+  }`;
+}
+
+/**
+ * "CLOSES 5 OCT 2026" / "CLOSED 5 OCT 2026" / "" for no deadline.
+ *
+ * Built from the three numbers in the value rather than `new Date(...)`, for the
+ * reason DateField.jsx gives at length: "2026-10-05" parsed as a Date is midnight
+ * UTC, and formatting that back in IST prints the 4th. A one-day error on a
+ * deadline is exactly the kind that loses somebody a registration.
+ */
+function closeLabel(value) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value ?? "").trim());
+  if (!m) return "";
+  const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                  "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  // Group 2 is the MONTH and group 3 the DAY. Reading them the other way round
+  // renders "5 OCT" as "31 OCT" and, worse, indexes the month array with 31 -
+  // which yields undefined and silently drops the deadline from the list.
+  const month = months[Number(m[2]) - 1];
+  if (!month) return "";
+  const text = `${Number(m[3])} ${month} ${m[1]}`;
+
+  // Today in Asia/Kolkata, same arithmetic as DateField's todayIso(): local time
+  // plus this machine's offset plus IST's own 330 minutes.
+  const now = new Date();
+  const ist = new Date(now.getTime() + (now.getTimezoneOffset() + 330) * 60000);
+  const today = `${ist.getFullYear()}${String(ist.getMonth() + 1).padStart(2, "0")}${String(
+    ist.getDate()
+  ).padStart(2, "0")}`;
+  // Comparing YYYYMMDD strings is calendar arithmetic on the three numbers, which
+  // is the whole point - no Date is ever parsed from the value.
+  const past = `${m[1]}${m[2]}${m[3]}` < today;
+  return past ? `CLOSED ${text}` : `CLOSES ${text}`;
 }
 
 function toBundleForm(row) {
@@ -202,6 +251,10 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
         // thing as an uncapped one and must not look like it in the form.
         max_registrations:
           form.max_registrations === "" ? null : Number(form.max_registrations),
+        // "" is "no deadline", which the RPC reads as null. Sent as a plain
+        // YYYY-MM-DD string, never an ISO instant: the column is a date and the
+        // comparison happens in Asia/Kolkata on the server.
+        registration_closes_on: form.registration_closes_on || null,
         // A blank amount leaves the existing price alone rather than clearing it.
         // Clearing a price is done in the Pricing tab, where "no price" is
         // something an operator can see and choose.
@@ -542,6 +595,29 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
               {form.payment_mode === "per_team"
                 ? "How many squads. Leave blank for no limit."
                 : "Total people allowed. Leave blank for no limit."}
+            </p>
+          </div>
+          {/* The last day, beside the limit because the two are one decision:
+              how many, and until when. DateField rather than <input type="date">
+              because that widget opens the OS's own light-themed calendar on top
+              of this dark console - the reason the roster's date filters were
+              replaced with this component. */}
+          <div className="col-span-2">
+            <label className={labelClass} htmlFor="cat-event-closes">
+              Registration closes
+            </label>
+            <div className="mt-1">
+              <DateField
+                id="cat-event-closes"
+                value={form.registration_closes_on}
+                onChange={(v) => setForm((f) => ({ ...f, registration_closes_on: v }))}
+                placeholder="No deadline"
+              />
+            </div>
+            <p className="mt-1 font-mono text-[10px] text-ash">
+              The last day somebody may register for this event — that whole day is
+              still open. Leave blank for no deadline. Closing registration does not
+              take the event off the site; use Retire for that.
             </p>
           </div>
         </div>

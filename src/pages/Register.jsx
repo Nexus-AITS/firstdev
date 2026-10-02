@@ -8,7 +8,7 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventFee, getEventFields, getEntryType, getPaymentMode, getEventView, requiresTeamRoster, maxTeammatesFor } from "../data/events.js";
+import { getEventFee, getEventFields, getEntryType, getPaymentMode, getEventView, requiresTeamRoster, maxTeammatesFor, isRegistrationClosed, formatRegistrationCloses } from "../data/events.js";
 import { getBundleById, getBundlePrice } from "../data/bundles.js";
 import { loadCatalogue, getCatalogueVersion, catalogueLoaded } from "../data/catalogue.js";
 import useEventView from "../hooks/useEventView.js";
@@ -175,6 +175,20 @@ export default function Register() {
   // getBundlePrice both return a number (or null), so this is a plain compare.
   const paid = fee != null && Number(fee) > 0;
   const contextTitle = event ? event.title : bundle ? bundle.name : null;
+  /* Has this event's registration closed? (migration ...034)
+     A single-event purchase is the case that can be answered from the catalogue
+     alone - the deadline is per event. A BUNDLE is not: it may seat several
+     events, each with its own last day, and the pool is chosen further down the
+     wizard, so the bundle deliberately reports closed=false here and lets the
+     database refuse a specific event at selection time. Guessing would be worse
+     than saying nothing.
+
+     This is a COURTESY, never the authority. The trigger
+     trg_event_registration_cap re-checks on the insert whatever this page
+     concluded, so a stale "open" here costs a participant one round trip and a
+     stale "closed" is impossible - the database is what actually decides. */
+  const closedEvent = event ? isRegistrationClosed(event.id) : false;
+  const closesOn = event ? formatRegistrationCloses(event.id) : null;
   const returnTo = event ? `/events/${event.id}` : bundle ? "/bundled" : "/events";
   // What the participant is buying — recorded on the row (purchase_type +
   // purchase_label) so the admin panel can show which event / which bundle.
@@ -1131,8 +1145,55 @@ export default function Register() {
                 </p>
               ) : null}
 
+              {/* ------------- registration closed (the last day has passed) ------------- */}
+              {/* INSTEAD of the wizard, on the same reasoning as the sign-in gate
+                  above: a form that cannot be completed teaches nothing about
+                  why. This names the date, and points at the event page and the
+                  contact channels, because "closed" with no next step is the one
+                  answer that strands a participant who arrived on the wrong day. */}
+              {signedIn && closedEvent ? (
+                <div id="reg-closed" className="flex flex-col items-center gap-6 py-6 text-center">
+                  <header>
+                    <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">
+                      {contextTitle}
+                    </p>
+                    <h2 className="mt-2 font-display text-[clamp(1.3rem,2.4vw,1.8rem)] tracking-[0.1em] text-crystal">
+                      REGISTRATION IS CLOSED
+                    </h2>
+                  </header>
+                  <p className="max-w-md text-sm leading-relaxed text-crystal/60">
+                    {closesOn
+                      ? `Sign-ups for this event closed on ${closesOn}.`
+                      : "Sign-ups for this event are closed."}{" "}
+                    The event itself may still be running — this only means new
+                    registrations are no longer being taken.
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-6">
+                    <Link
+                      to={returnTo}
+                      className="border border-lavender/50 px-6 py-3 text-[10px] uppercase tracking-[0.28em] text-crystal/80 transition-colors duration-300 hover:border-lavender hover:text-crystal"
+                    >
+                      Back to the event
+                    </Link>
+                    <Link
+                      to="/contact"
+                      className="text-[10px] uppercase tracking-[0.35em] text-crystal/40 transition-colors hover:text-lavender"
+                    >
+                      Contact the coordinators →
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+
               {/* ---------------- step 1: details ---------------- */}
-              {signedIn && step === "details" ? (
+              {/* ONLY this step is gated on the deadline, and deliberately. It is
+                  the step that creates a NEW registration, which is what the
+                  deadline governs. The later steps - select, team, utr - belong to
+                  somebody who ALREADY holds a row, and their seat was taken while
+                  registration was still open. Gating those too would strand
+                  somebody who registered on the 4th and paid on the 6th, which is
+                  the exact failure this feature must not cause. */}
+              {signedIn && !closedEvent && step === "details" ? (
                 <form
                   id="reg-step-details"
                   onSubmit={proceedFromDetails}
@@ -1293,7 +1354,14 @@ export default function Register() {
                       registration ends on CONFIRM having paid nothing yet - the
                       operations team marks it verified when they take the money
                       at the desk. The AMOUNT is identical either way, so the
-                      choice is only about how the money arrives. */}
+                      choice is only about how the money arrives.
+
+                      There is no separate "spot registration" and never was:
+                      registering on the day is not a different product, it is a
+                      cash payment that the desk settles. So the copy sends the
+                      participant to the people who can actually authorise it -
+                      the coordinators on /contact - rather than describing a
+                      walk-up flow the site does not run. */}
                   {paid ? (
                     <fieldset id="reg-paymethod" className="flex flex-col gap-3">
                       <legend className={labelClass}>How would you like to pay?</legend>
@@ -1306,7 +1374,7 @@ export default function Register() {
                         {
                           id: "cash",
                           label: "Pay cash at the venue",
-                          help: "Nothing to scan. Hand the fee to the NEXUS desk when you arrive, and we will mark it paid.",
+                          help: "Nothing to scan. Contact the NEXUS coordinators first to arrange it — they will confirm your spot and take the fee at the desk.",
                         },
                       ].map((option) => (
                         <label
