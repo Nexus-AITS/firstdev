@@ -22,7 +22,9 @@ import {
   ROLE_META,
   can,
   staffCreate,
+  staffCreateRegistration,
   staffDeleteRegistration,
+  staffUpdateRegistration,
   staffExportRegistrations,
   staffFilterOptions,
   staffListAudit,
@@ -47,6 +49,7 @@ import CatalogueManager from "../components/admin/CatalogueManager.jsx";
 import ContactManager from "../components/admin/ContactManager.jsx";
 import DestinationManager from "../components/admin/DestinationManager.jsx";
 import LookupManager from "../components/admin/LookupManager.jsx";
+import RegistrationEditor, { emptyRegistration } from "../components/admin/RegistrationEditor.jsx";
 import FinanceStrip from "../components/admin/FinanceStrip.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
 // used to build its price list from them, which meant an event created in the
@@ -474,6 +477,12 @@ function RosterTab({
   const role = session.role;
   const [notice, setNotice] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  /* Which row's editor is open, and whether the ADD form is open. One slot
+     rather than one per row, so an operator cannot open four editors on four
+     rows and lose track of what they were editing. */
+  const [editingId, setEditingId] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   /* What the three filters can actually match, each with a registration COUNT.
      Read from staff_filter_options(), NOT from the registration form's lookup
@@ -682,6 +691,46 @@ function RosterTab({
   }
 
   const readOnly = !can(role, "verify");
+
+  /* Save one edited row. The server's own sentence is shown verbatim here, unlike
+     `act()` above — because this form's whole job is to explain refusals the
+     operator can act on ("empty the reference after setting the status to
+     Rejected first"), and replacing them with "please try again" would leave
+     somebody stuck in front of a form that will never save. */
+  async function saveEdit(id, pairs) {
+    setSaving(true);
+    const result = await staffUpdateRegistration(session.token, id, Object.fromEntries(pairs));
+    setSaving(false);
+    if (result.ok) {
+      setEditingId(null);
+      setNotice({
+        kind: "ok",
+        text:
+          result.changed > 0
+            ? `Saved. ${result.changed} field${result.changed === 1 ? "" : "s"} changed, recorded in the audit log as ${session.username}.`
+            : "Nothing was changed.",
+      });
+      reload();
+    } else {
+      setNotice({ kind: "error", text: result.error ?? "That change could not be saved." });
+    }
+  }
+
+  async function createOne(pairs) {
+    setSaving(true);
+    const result = await staffCreateRegistration(session.token, Object.fromEntries(pairs));
+    setSaving(false);
+    if (result.ok) {
+      setAdding(false);
+      setNotice({
+        kind: "ok",
+        text: "Registration added. It has no owner linked — nobody signed up on the site.",
+      });
+      reload();
+    } else {
+      setNotice({ kind: "error", text: result.error ?? "That registration could not be added." });
+    }
+  }
 
   /**
    * Freeze or re-open a selection.
@@ -977,8 +1026,33 @@ function RosterTab({
           >
             {exporting ? "Preparing…" : "Export to Excel"}
           </button>
+          {/* Add a registration taken at the desk. Offered to anyone who can READ
+              the roster, because staff_create_registration is coordinator+ and a
+              wider button would only ever answer "Not authorised". A coordinator
+              reconciling a cash float is doing routine work, not escalating. */}
+          <button
+            type="button"
+            data-action="roster-add"
+            onClick={() => {
+              setAdding((v) => !v);
+              setEditingId(null);
+            }}
+            className="border border-lavender/50 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-crystal/80 transition hover:border-lavender"
+          >
+            {adding ? "Cancel" : "Add registration"}
+          </button>
         </div>
       </div>
+
+      {adding ? (
+        <RegistrationEditor
+          initial={emptyRegistration()}
+          onSave={createOne}
+          onCancel={() => setAdding(false)}
+          saving={saving}
+          submitLabel="Add registration"
+        />
+      ) : null}
 
       <p
         className="mt-3 font-mono text-[11px] uppercase tracking-[0.25em] text-ash"
@@ -1143,6 +1217,18 @@ function RosterTab({
 
             {!readOnly ? (
               <div className="mt-4 flex flex-wrap gap-2">
+                {/* EDIT. Sits with Confirm and Reject rather than behind a
+                    separate screen, because correcting a mistyped roll number is
+                    the same act as confirming a payment — it happens while
+                    looking at this row, with this row's context on screen. */}
+                <ActionButton
+                  label={editingId === r.id ? "Editing…" : "Edit"}
+                  disabled={busyId === r.id || saving}
+                  onClick={() => {
+                    setEditingId((cur) => (cur === r.id ? null : r.id));
+                    setAdding(false);
+                  }}
+                />
                 <ActionButton
                   label="Confirm"
                   disabled={r.payment_status === "verified" || busyId === r.id}
@@ -1204,6 +1290,20 @@ function RosterTab({
                   }}
                 />
               </div>
+            ) : null}
+
+            {/* The editor opens INSIDE the row rather than in a dialog, so the
+                operator keeps the row's status, amount and audit state on screen
+                while they correct it. Gated on the same readOnly as the other
+                actions, because staff_update_registration is admin+. */}
+            {editingId === r.id && !readOnly ? (
+              <RegistrationEditor
+                initial={r}
+                onSave={(pairs) => saveEdit(r.id, pairs)}
+                onCancel={() => setEditingId(null)}
+                saving={saving}
+                submitLabel="Save changes"
+              />
             ) : null}
           </li>
         ))}

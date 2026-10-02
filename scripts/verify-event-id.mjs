@@ -162,23 +162,39 @@ const counts = sql(
 out(counts.missed === 0, "no row was left behind by the backfill", JSON.stringify(counts));
 out(counts.backfilled > 0, "rows were actually backfilled", `${counts.backfilled}`);
 out(counts.guard_left_on === 1, "the guard trigger is still enabled after the migration");
+/* FREE FIRE specifically, NOT a count. The count assertion this replaced was
+   "exactly one event requires an ID", which was true only until somebody ticked
+   the box on a second event — and a test that fails because a feature is being
+   used is worse than no test. PUBG was switched on the moment this shipped, which
+   is the whole point of it: an esports event can now ask for its lobby ID without
+   a migration. */
+const who = sql(
+  `select string_agg(id, ', ' order by id) as ids
+     from public.event_catalogue where requires_event_id`
+)[0];
+
 out(
-  counts.events_requiring === 1,
-  "exactly one event requires an ID - FREE FIRE",
-  `${counts.events_requiring}`
+  (who?.ids ?? "").split(", ").includes("free-fire"),
+  "FREE FIRE still requires an ID — the requirement was carried over, not lost",
+  who?.ids
 );
 
 const pub = sql(
   `select e->>'id' as id, e->>'requires_event_id' as needs
      from public.public_catalogue() c
      cross join lateral jsonb_array_elements(c->'events') e
-    where (e->>'requires_event_id')::boolean is true`
-)[0];
+    where (e->>'requires_event_id')::boolean is true
+    order by e->>'id'`
+);
 
 out(
-  pub?.id === "free-fire" && pub?.needs === "true",
-  "the public read carries the flag",
-  JSON.stringify(pub)
+  pub.length > 0 && pub.every((e) => e.needs === "true"),
+  "every event with the box ticked carries the flag in the PUBLIC read",
+  pub.map((e) => e.id).join(", ")
+);
+out(
+  pub.some((e) => e.id === "free-fire"),
+  "and FREE FIRE is among them"
 );
 
 console.log(

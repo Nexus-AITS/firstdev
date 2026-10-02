@@ -652,6 +652,62 @@ export async function staffSetStatus(token, id, status, username) {
   return { ok: res.ok, data: Array.isArray(res.data) ? res.data[0] : null, error: res.ok ? null : res.error };
 }
 
+/**
+ * Correct a registration from the console, through the RPC.
+ *
+ * NOT a REST PATCH, and the difference is the whole point. staff_update_
+ * registrations checks the caller's ROLE and nothing about the row that comes
+ * out — its WITH CHECK is the same expression as its USING — and
+ * trg_registrations_guard_update returns early for staff BEFORE its identity
+ * checks. A PATCH can therefore rewrite user_id, id or created_at on any
+ * registration. That is survivable while the console only sends
+ * payment_status; it stops being survivable the moment it sends everything an
+ * operator can type, because the row could be handed to another account and the
+ * audit trail would describe a transfer nobody made.
+ *
+ * staff_update_registration names the columns it will ever write. Anything else
+ * is not rejected after the fact — it is never read, so `user_id` in the patch
+ * changes nothing at all. scripts/verify-roster-crud.mjs proves that over the
+ * wire rather than trusting this comment.
+ *
+ * `utr_number` and `payment_status` are ONE decision: chk_registrations_utr_state
+ * will not accept a reference on a row still awaiting one, so the RPC moves the
+ * status with it and the console does not have to know that rule exists.
+ */
+export async function staffUpdateRegistration(token, id, patch) {
+  const res = await rpc("staff_update_registration", { p_id: id, p_patch: patch }, token);
+  if (!res.ok) {
+    return { ok: false, error: res.body?.message ?? "The change could not be saved." };
+  }
+  const body = res.body ?? {};
+  if (body.ok === false) {
+    return { ok: false, changed: 0, error: body.error ?? "The change could not be saved." };
+  }
+  return { ok: true, changed: body.changed ?? 0, error: null };
+}
+
+/**
+ * Record a registration taken in person at the desk.
+ *
+ * The row is created WITHOUT an owner on purpose: a staff token carries no JWT
+ * for trg_registrations_set_user_id to stamp, and a row that claimed an owner
+ * would let that person later "continue" a registration they never made. It
+ * shows on the roster as ownerless, which is the truth.
+ *
+ * Coordinator+, not admin+ — reconciling the cash float is routine work.
+ */
+export async function staffCreateRegistration(token, reg) {
+  const res = await rpc("staff_create_registration", { p_reg: reg }, token);
+  if (!res.ok) {
+    return { ok: false, error: res.body?.message ?? "The registration could not be added." };
+  }
+  const body = res.body ?? {};
+  if (body.ok === false) {
+    return { ok: false, error: body.error ?? "The registration could not be added." };
+  }
+  return { ok: true, id: body.id ?? null, error: null };
+}
+
 export async function staffDeleteRegistration(token, id) {
   const res = await staffFetch(`registrations?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",

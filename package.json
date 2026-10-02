@@ -54,6 +54,8 @@
     "verify:dynamic-event": "node scripts/verify-dynamic-event.mjs",
     "verify:dynamic-src": "node scripts/verify-dynamic-event-src.mjs",
     "verify:event-id": "node scripts/verify-event-id.mjs",
+    "verify:roster-crud": "node scripts/verify-roster-crud.mjs",
+    "verify:event-id-field": "node scripts/verify-event-id-field.mjs",
     "verify:contacts": "node scripts/verify-contacts.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
     "verify:profile": "node scripts/verify-profile.mjs",
