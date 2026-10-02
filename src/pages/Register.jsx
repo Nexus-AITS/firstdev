@@ -1018,7 +1018,14 @@ export default function Register() {
             <p className="mx-auto mt-5 max-w-xl text-sm leading-relaxed tracking-wide text-crystal/60">
               {contextTitle
                 ? paid
-                  ? "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
+                  ? /* The method is chosen ON this screen, so this line has to
+                      follow the choice rather than assume it. It used to promise a
+                      QR and a UTR to everybody, including someone who had already
+                      ticked "cash at the venue" two hundred pixels below - an
+                      instruction with no field to follow it in. */
+                    isCash
+                      ? "Submit your details, then contact the NEXUS coordinators to arrange cash at the venue. Your place is held straight away."
+                      : "Submit your details, pay with the QR below, then paste your UTR — the admin confirms and your seat is locked."
                   : "Submit your details — this entry is free, no payment needed. The admin confirms and your seat is locked."
                 : "Pick an event in the realms to register with its fee, or fill your details below to join the roster."}
               {/* Driven by entryType and paymentMode, not by the free-text
@@ -1031,7 +1038,15 @@ export default function Register() {
                   whether they owe 300 or 1500. */}
               {getEntryType(event) === "team"
                 ? getPaymentMode(event) === "per_team"
-                  ? ` Squad event — you register and pay once for the whole squad of up to ${event.maxTeamMembers} people. On the next screen, add your teammates' details; they do not register separately.`
+                  ? /* ...and the roster sentence is conditional on there BEING a
+                      roster step. FREE FIRE pays as a squad but collects no
+                      teammates on this site (migration ...035), so promising
+                      "add your teammates' details" would send a leader to a step
+                      that no longer exists - the exact class of dead-end the
+                      requiresTeamRoster predicate exists to avoid. */
+                    requiresTeamRoster(event)
+                    ? ` Squad event — you register and pay once for the whole squad of up to ${event.maxTeamMembers} people. On the next screen, add your teammates' details; they do not register separately.`
+                    : ` Squad event — you register and pay once for the whole squad of up to ${event.maxTeamMembers} people. There is no teammate list to fill in: you will team up at the venue, and the fee covers the whole squad.`
                   : ` Team event — up to ${event.maxTeamMembers} per team, and each member registers and pays separately. You will be able to form your team once your payment is approved.`
                 : ""}
             </p>
@@ -1667,17 +1682,33 @@ export default function Register() {
                   </h2>
                   <p className="max-w-md text-sm leading-relaxed text-crystal/60">
                     {done.name} · {done.email} ·{" "}
-                    {done.utr_number ? `UTR ${done.utr_number}` : "no payment due"}
+                    {/* A cash row carries no reference, and reading that as
+                        "no payment due" was wrong in the direction that costs
+                        money: the participant OWES the fee, they just owe it at
+                        the desk rather than through an app. Migration ...026
+                        stores the method on the row precisely so this line can
+                        say which it is instead of guessing from a null. */}
+                    {done.payment_method === "cash"
+                      ? `cash · ₹${done.purchase_amount ?? "—"} due at the venue`
+                      : done.utr_number
+                        ? `UTR ${done.utr_number}`
+                        : "no payment due"}
                     .{" "}
                     {/* The panel is the same one an adopted registration lands
                         on, so it has to be true for a row in ANY state — it used
                         to promise "waiting for admin verification" even for a
                         seat that was already verified. */}
                     {done.payment_status === "verified"
-                      ? "Payment verified — your seat is confirmed."
+                      ? done.payment_method === "cash"
+                        ? "Cash received — your seat is confirmed."
+                        : "Payment verified — your seat is confirmed."
                       : done.payment_status === "rejected"
-                        ? "The reference could not be matched — send a new one below."
-                        : "Your entry is waiting for admin verification — watch your email for confirmation."}
+                        ? done.payment_method === "cash"
+                          ? "The cash payment was declined — contact the operations team."
+                          : "The reference could not be matched — send a new one below."
+                        : done.payment_method === "cash"
+                          ? "Your place is held. Pay the fee in cash at the venue; the operations team marks it paid when they take the money."
+                          : "Your entry is waiting for admin verification — watch your email for confirmation."}
                   </p>
                   <p
                     id="reg-sync"

@@ -11,6 +11,7 @@ import MetaRow from "../components/event/MetaRow.jsx";
 import NotFound from "./NotFound.jsx";
 import { formatEventFee, getEventFee, formatEntryType, paymentNote } from "../data/events.js";
 import { realms } from "../data/realms.js";
+import { catalogueLoaded } from "../data/catalogue.js";
 import useEventView from "../hooks/useEventView.js";
 import usePricing from "../hooks/usePricing.js";
 
@@ -24,9 +25,42 @@ export default function EventDetail() {
   // getEventFee, so a price a master changed in the console is what shows here.
   usePricing();
 
+  /* NOT FOUND versus NOT LOADED YET - and the difference is one network round
+     trip, so getting it wrong flashes the wrong page.
+
+     An event that exists only in the database cannot be resolved until
+     public_catalogue answers, because there is no compiled copy to fall back on.
+     Returning NotFound in that window showed a real, on-sale event as a 404 for
+     as long as the fetch took, which reads as "this event does not exist" and
+     sends an operator looking for a bug in the catalogue tab.
+
+     So: while the catalogue is still loading, hold the route. Only once it has
+     answered is `null` real evidence that the id is wrong. */
+  if (!event && !catalogueLoaded()) {
+    return (
+      <Page>
+        <div className="relative min-h-svh overflow-hidden bg-void">
+          <RealmFX mode="stars" factor={0.7} />
+          <p
+            role="status"
+            aria-live="polite"
+            className="relative z-10 px-5 pt-40 text-center font-mono text-[11px] uppercase tracking-[0.35em] text-ash md:px-10"
+          >
+            Loading event…
+          </p>
+        </div>
+      </Page>
+    );
+  }
+
   if (!event) return <NotFound />;
 
-  const realm = realms[event.realm];
+  /* An event row carries `realm`, and the catalogue CHECK confines it to the
+     three realms this site has pages for. The lookup is still defensive because
+     `realm.route` is dereferenced directly below, and a row from a future
+     migration must render something rather than crash the page to black - which
+     is the same failure mode the profile dropdowns had. */
+  const realm = realms[event.realm] ?? realms.forge;
 
   return (
     <Page>
@@ -113,27 +147,32 @@ export default function EventDetail() {
           </Reveal>
         </div>
 
-        {/* about */}
-        <section
-          className="relative z-10 mx-auto mt-16 grid max-w-[1680px] gap-8 px-5 md:mt-24 md:grid-cols-12 md:px-10"
-          aria-label="About the event"
-        >
-          <div className="md:col-span-4">
-            <Reveal>
-              <h2 className="font-display text-[clamp(1.6rem,3vw,2.6rem)] tracking-[0.12em] text-crystal">
-                ABOUT THE EVENT
-              </h2>
-              <div className="hairline mt-5 w-32" aria-hidden />
-            </Reveal>
-          </div>
-          <div className="flex flex-col gap-5 md:col-span-7 md:col-start-6">
-            {event.about.map((paragraph, i) => (
-              <Reveal key={i} delay={0.08 * i}>
-                <p className="text-[15px] leading-[1.95] tracking-wide text-crystal/65">{paragraph}</p>
+        {/* about — only when there is prose to show. An event created in the
+            console carries none (the `about` paragraphs live only in the
+            compiled seed), and a heading with nothing under it reads as a page
+            that failed to load rather than one with a short description. */}
+        {event.about.length ? (
+          <section
+            className="relative z-10 mx-auto mt-16 grid max-w-[1680px] gap-8 px-5 md:mt-24 md:grid-cols-12 md:px-10"
+            aria-label="About the event"
+          >
+            <div className="md:col-span-4">
+              <Reveal>
+                <h2 className="font-display text-[clamp(1.6rem,3vw,2.6rem)] tracking-[0.12em] text-crystal">
+                  ABOUT THE EVENT
+                </h2>
+                <div className="hairline mt-5 w-32" aria-hidden />
               </Reveal>
-            ))}
-          </div>
-        </section>
+            </div>
+            <div className="flex flex-col gap-5 md:col-span-7 md:col-start-6">
+              {event.about.map((paragraph, i) => (
+                <Reveal key={i} delay={0.08 * i}>
+                  <p className="text-[15px] leading-[1.95] tracking-wide text-crystal/65">{paragraph}</p>
+                </Reveal>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         {/* CTA */}
         <section className="relative z-10 mx-auto mt-20 max-w-[1680px] px-5 pb-32 text-center md:mt-28 md:px-10">

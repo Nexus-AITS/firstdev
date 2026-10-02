@@ -356,7 +356,39 @@ export function getEventsByRealm(realmId) {
  * field exists.
  */
 export function getEventFields(id) {
-  return getEventById(id)?.fields ?? [];
+  /* getEventView, NOT getEventById. The second matters more here than anywhere
+     else: an event that asks for an ID is most likely to be one a master CREATED
+     in the console, and a console-created event has no entry in the compiled
+     array - so the old lookup returned [] for exactly the events this is for. */
+  const view = getEventView(id);
+  if (!view) return [];
+
+  const compiled = getEventById(id)?.fields ?? [];
+  // The console has not asked for one, and the compiled array is the authority
+  // on anything else an event might declare.
+  if (view.requiresEventId !== true) return compiled;
+
+  /* The LABEL is written from the event's own title - "FREE FIRE ID", "VISION
+     2065 ID" - so the field names itself and nobody has to go and find which
+     event it belonged to. It used to be a literal string next to the one event
+     it applied to, which is why the phrase "an event-specific ID" existed at
+     all.
+
+     Placeholder and help are carried over from a compiled entry when there is
+     one, because FREE FIRE's explanation of where to find an in-game ID is
+     genuinely useful prose that the console cannot hold. */
+  const extra = compiled.find((f) => f.name === "event_id_value") ?? compiled[0] ?? null;
+  return [
+    {
+      name: "event_id_value",
+      label: `${view.title} ID`,
+      placeholder: extra?.placeholder ?? "e.g. 2831945712",
+      help:
+        extra?.help ??
+        "Required for this event. It is checked at the venue, so enter it exactly as the event shows it.",
+      maxLength: extra?.maxLength ?? 32,
+    },
+  ];
 }
 
 /** The event's logo file name (without a path), or null. */
@@ -587,9 +619,17 @@ events.forEach((event) => {
  * "—" (a data gap) rather than "FREE" — a missing price is not a free seat.
  */
 export function getEventFee(id) {
-  const event = getEventById(id);
-  if (!event) return null;
-  const view = getEventView(event);
+  /* getEventView, NOT getEventById. Resolving through the compiled array alone
+     meant an event created in the console had NO fee here: this returned null,
+     and a null fee is not "unknown", it is what formatFee renders as "—" AND
+     what `paid = fee > 0` reads as FREE. A master could set Rs 249 on a new
+     event, see the price on its page, and the register wizard would still route
+     that participant past the payment steps entirely.
+
+     The order below is unchanged; only the resolver is, and it now answers from
+     whichever source has the event. */
+  const view = getEventView(id);
+  if (!view) return null;
   if (view.livePrice != null) return Number(view.livePrice);
   // The catalogue answered for this event and still has no price: that is the
   // answer, and it is not the compiled one.
@@ -635,6 +675,7 @@ const LIVE_OVERRIDES = [
   ["payment_mode", "paymentMode"],
   ["team_formed_offsite", "teamFormedOffsite"],
   ["roster_collected_on_site", "rosterCollectedOnSite"],
+  ["requires_event_id", "requiresEventId"],
   ["status", "status"],
   ["price", "livePrice"],
   ["registration_closes_on", "registrationClosesOn"],
@@ -686,7 +727,25 @@ const BLANKABLE = new Set(["maxRegistrations", "teamFormUrl", "registrationClose
  * would make the fallback depend on a network call.
  */
 export function getEventView(eventOrId) {
-  const base = typeof eventOrId === "string" ? getEventById(eventOrId) : eventOrId;
+  /* A compiled entry OR a live catalogue row, whichever exists.
+
+     getEventById() searches the compiled array in this file, and that used to be
+     the ONLY place an event could come from. But the Catalogue tab writes rows to
+     the database, and public_catalogue() publishes them - so a master could
+     create an event, see it listed on its realm page, click it, and land on a
+     404. The site was advertising a page it could not render, which is the worst
+     version of this bug: the link worked, so nothing looked broken until the
+     click.
+
+     The two sources answer DIFFERENT questions and both are needed. The compiled
+     copy holds prose and presentation - the `about` paragraphs, the sigil, the
+     logo - that the console cannot edit. The row holds everything an operator
+     CAN change. So the compiled copy stays the base when there is one, and a
+     DB-only event is built from its own row and simply carries none of the
+     presentation extras. Rendering its title, venue, date and fee is the point;
+     the long copy can wait for a developer. */
+  const byId = typeof eventOrId === "string" ? eventOrId : null;
+  const base = byId !== null ? getEventById(byId) ?? getLiveEvent(byId) : eventOrId;
   if (!base) return null;
   const live = getLiveEvent(base.id);
   if (!live) return base;
@@ -707,6 +766,15 @@ export function getEventView(eventOrId) {
     if (BLANKABLE.has(field)) out[field] = live[column] ?? null;
   }
   out.registeredCount = Number.isInteger(live.registered_count) ? live.registered_count : null;
+  /* `about` is the long-form prose, and it is the one piece of an event the
+     console cannot write - it lives only in the compiled file. A DB-only event
+     therefore usually has none, and the column's NOT NULL DEFAULT '{}' means it
+     arrives as an empty array rather than null.
+
+     Both shapes are normalised here because the page calls `event.about.map(...)`
+     directly, and an array built from a row that predates the column - or one
+     whose operator left it out - must not be able to render a blank page. */
+  out.about = Array.isArray(base.about) ? base.about : Array.isArray(out.about) ? out.about : [];
   return out;
 }
 

@@ -61,6 +61,11 @@ const emptyEvent = {
   // its squad forms in game (migration ...035). Distinct from
   // `team_formed_offsite`, which decides who PAYS.
   roster_collected_on_site: true,
+  // Whether a registration for this event must carry an identifier. When ticked,
+  // the register form asks for one and labels the field from the event's own
+  // title ("FREE FIRE ID"). Migration ...034's trigger hardcoded one event;
+  // ...037 made it this.
+  requires_event_id: false,
   // Same rule for the deadline: blank is OPEN, not "closed today". The column is
   // a calendar day (migration ...034), so the form carries a plain YYYY-MM-DD
   // and the database compares it in Asia/Kolkata - never as an instant.
@@ -98,6 +103,10 @@ function toEventForm(row) {
     // checkbox as unticked — silently switching OFF the data collection the
     // event has always done. The database default is true; this matches it.
     roster_collected_on_site: row.roster_collected_on_site !== false,
+    // `!== false` for the same reason: a row written before migration ...037 has
+    // no value here, and reading that as false would quietly switch OFF the
+    // requirement on FREE FIRE — the one event that has always had it.
+    requires_event_id: row.requires_event_id === true,
     // The database stores a `date`, which PostgREST serialises as a bare
     // YYYY-MM-DD - the exact shape DateField parses. The `?? ""` is for a row
     // that predates migration ...034 and has no deadline at all.
@@ -294,6 +303,10 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
         // value in place and the box would appear to save but not save.
         roster_collected_on_site:
           form.entry_type === "team" ? !!form.roster_collected_on_site : true,
+        // Sent even when false, so a tick can be CLEARED — the RPC reads it by
+        // presence, and omitting it would leave the old value in place so the box
+        // would appear to save but not save.
+        requires_event_id: !!form.requires_event_id,
         team_form_url: form.team_form_url.trim() === "" ? null : form.team_form_url.trim(),
         status: form.status.trim(),
         is_active: form.is_active,
@@ -595,6 +608,32 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
             </label>
           </div>
         ) : null}
+        {/* THE ID BOX. Shown for every event, unlike the roster box above: an
+            individual esports event still needs its in-game ID, and hiding this
+            one behind "entry type = team" would make the most obvious use of it
+            unreachable. */}
+        <div>
+          <label className={labelClass} htmlFor="cat-event-needs-id">
+            Require an ID
+          </label>
+          <label className="mt-2 flex items-start gap-2 font-mono text-[12px] text-bone">
+            <input
+              id="cat-event-needs-id"
+              data-action="cat-event-needs-id"
+              type="checkbox"
+              className="mt-0.5"
+              checked={!!form.requires_event_id}
+              onChange={set("requires_event_id")}
+            />
+            <span>
+              Tick this and every registration must bring an identifier &mdash; the
+              in-game lobby ID for an esports event, a handle, a bib number. The
+              form labels the field from this event&apos;s own title, so it reads
+              &ldquo;{form.title || "EVENT"} ID&rdquo;. The database refuses a
+              registration without one.
+            </span>
+          </label>
+        </div>
         <div>
           <label className={labelClass} htmlFor="cat-event-teamurl">Team link</label>
           <input

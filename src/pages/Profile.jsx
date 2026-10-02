@@ -7,7 +7,7 @@ import Select from "../components/ui/Select.jsx";
 import ParticleField from "../components/fx/ParticleField.jsx";
 import GoogleSignIn from "../components/auth/GoogleSignIn.jsx";
 import { useAuth } from "../context/AuthContext";
-import { getEventById, getEventFee, getEventView } from "../data/events.js";
+import { getEventFee, getEventView } from "../data/events.js";
 import { getBundlePrice } from "../data/bundles.js";
 import { loadMyProfile, saveMyProfile } from "../data/profiles.js";
 import { listMyRegistrationsDetailed } from "../data/registrations.js";
@@ -57,9 +57,18 @@ const fieldClass =
 const labelClass =
   "mb-2 block text-[10px] font-medium uppercase tracking-[0.3em] text-lavender/75";
 
-/** Title for a catalogue id, or the id itself when the catalogue has moved on. */
+/**
+ * Title for a catalogue id, or the id itself when the catalogue has moved on.
+ *
+ * getEventView, not getEventById: the latter searches the compiled seed only, so
+ * an event a master created in the console resolved to nothing and the profile
+ * printed its raw slug - "zz-dynamic-probe" - where the participant should have
+ * read the event's actual name. The id fallback stays for a registration whose
+ * event was genuinely deleted, where showing the id is the most useful thing
+ * left to show.
+ */
 function eventTitle(id) {
-  return getEventById(id)?.title ?? id;
+  return getEventView(id)?.title ?? id;
 }
 
 /**
@@ -71,11 +80,32 @@ function eventTitle(id) {
  */
 function stage(row) {
   const events = row.events ?? [];
+  /* A cash row NEVER has a reference, and that is not a missing reference - it is
+     the whole point of paying at the desk (migration ...026). Reading it like a
+     UTR row told a cash participant their payment was "Stopped at step 3 - paste
+     your UTR", which is an instruction they cannot follow: there is no field to
+     paste into and nothing to paste. Cash gets its own sentences, keyed on the
+     METHOD rather than on the absence of a reference, so a genuinely incomplete
+     UTR row still reads as incomplete. */
+  const cash = row.payment_method === "cash";
+
   if (row.payment_status === "verified") {
-    return { text: "Complete — payment verified", cta: null };
+    return {
+      text: cash ? "Complete — cash received" : "Complete — payment verified",
+      cta: null,
+    };
   }
   if (row.payment_status === "rejected") {
-    return { text: "Reference rejected — resend your UTR", cta: "Fix payment" };
+    return cash
+      ? { text: "Cash payment declined — contact the operations team", cta: null }
+      : { text: "Reference rejected — resend your UTR", cta: "Fix payment" };
+  }
+  if (cash) {
+    // awaiting_cash: registered, seat held, money not moved yet.
+    return {
+      text: "Registered — pay cash at the venue",
+      cta: null,
+    };
   }
   if (row.utr_number) {
     return { text: "Submitted — waiting for verification", cta: null };
@@ -176,7 +206,29 @@ export default function Profile() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const set = (key) => (e) => setDetails((d) => ({ ...d, [key]: e.target.value }));
+  /* Accepts BOTH shapes of value, because the form mixes two kinds of control.
+
+     <input onChange> hands back a DOM event, and <Select> hands back the option's
+     VALUE. This setter is shared by both, and it used to read `e.target.value`
+     unconditionally - so the college and department DROPDOWNS threw
+     `Cannot read properties of undefined (reading 'value')` on the first click.
+     There is no error boundary on this route, so React unmounted the whole tree
+     and the page went to a blank black screen. A crash that renders nothing is
+     the worst kind of bug to report: the participant sees a dead page and cannot
+     tell that choosing a college caused it.
+
+     The year dropdown on this same screen was already written the safe way
+     (`setDetails((d) => ({ ...d, year: value }))`), which is why only two of the
+     three dropdowns ever broke - worth knowing when the next one is added.
+
+     `value?.target ? value.target.value : value` rather than an instanceof check:
+     a React synthetic event is not a DOM Event, and `instanceof` would not
+     recognise it, so the check has to be structural. */
+  const set = (key) => (value) =>
+    setDetails((d) => ({
+      ...d,
+      [key]: value?.target ? value.target.value : value,
+    }));
 
   // Both reads are scoped by RLS to the signed-in user, so this screen can only
   // ever show one participant's data — there is no "whose profile is this"

@@ -469,10 +469,26 @@ export function rosterFilters({
   college,
   year,
   department,
+  method,
 } = {}) {
   const term = String(query ?? "").trim();
   const filters = {};
   if (status && status !== "all") filters.payment_status = `eq.${status}`;
+
+  /* HOW THE MONEY ARRIVED, as its own filter beside the status filter.
+
+     The question the operations team actually asks about cash is "what is still
+     outstanding at the desk?", and `awaiting_cash` only answers half of it - it
+     finds the ones nobody has taken money for yet, not the ones they took it for
+     yesterday. Filtering on the METHOD rather than inventing two more statuses
+     gets both at once, which is what a reconciler wants: every cash row,
+     whatever stage it is at.
+
+     Unquoted `eq.` rather than exact(), for the same reason `year` is unquoted:
+     payment_method is a closed two-value set held by chk_registrations_payment_method
+     ('utr' or 'cash'), so there is nothing here for a quote to disambiguate. The
+     quoted form is what silently broke college and department - see above. */
+  if (method && method !== "all") filters.payment_method = `eq.${method}`;
 
   /* College, year and department are COLUMNS on registrations, not a join, so
      these are plain equality predicates and the whole thing stays one query.
@@ -698,6 +714,7 @@ export async function staffExportRegistrations(token, options = {}) {
     college = null,
     year = null,
     department = null,
+    method = null,
   } = options;
   const body = {
     p_from_date: fromDate || null,
@@ -713,6 +730,12 @@ export async function staffExportRegistrations(token, options = {}) {
     p_college: college || null,
     p_year: year || null,
     p_department: department || null,
+    /* Same rule for the payment-method filter, and it matters more here than for
+       the others: this is the sheet a cash float is counted against. Filtering
+       the roster to "Cash" and downloading everything would make the export
+       disagree with the screen in exactly the place where a mistake is
+       invisible until the money does not add up. */
+    p_method: method || null,
   };
   const res = await rpc("staff_export_registrations", body, token);
   if (!res.ok) {

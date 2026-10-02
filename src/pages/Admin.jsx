@@ -147,6 +147,12 @@ const DEFAULT_PAGING = {
     college: "all",
     year: "all",
     department: "all",
+    // How the money arrived: cash or UPI. Kept SEPARATE from `status` rather than
+    // folded into it, because "cash" spans two statuses - awaiting_cash (money
+    // still due at the desk) and verified (taken and confirmed). Filtering on the
+    // method answers the reconciler's question - "every cash row" - in one click,
+    // which is what a cash float is counted against.
+    method: "all",
   },
   audit: { page: 1, pageSize: 25, action: "all" },
   staff: { page: 1, pageSize: 25 },
@@ -608,6 +614,10 @@ function RosterTab({
       college: paging.college ?? "all",
       year: paging.year ?? "all",
       department: paging.department ?? "all",
+      /* The payment-method filter too. Same reason, sharper: a cash sheet that
+         quietly contains UTR rows (or the reverse) is a reconciliation error that
+         looks fine until somebody counts the float. */
+      method: paging.method ?? "all",
     });
     setExporting(false);
 
@@ -753,6 +763,37 @@ function RosterTab({
                 { value: "unverified", label: "Unverified" },
                 { value: "verified", label: "Verified" },
                 { value: "rejected", label: "Rejected" },
+              ]}
+              className="w-[11rem]"
+            />
+          </div>
+        </div>
+
+        {/* PAYMENT METHOD, beside Status rather than inside it.
+
+            Deliberately a second control and not more Status options. "Cash" is
+            not a lifecycle stage: the same cash registration is `awaiting_cash`
+            until somebody takes the money and `verified` afterwards, so a
+            reconciler asking "show me every cash payment" needs to span both -
+            which a status filter structurally cannot do, because every value in
+            it means exactly one stage. Two cash statuses would have been the
+            alternative, and it would have been wrong: it would split one
+            population in two and make a count of cash registrations depend on
+            which screen you counted it from. */}
+        <div>
+          <label htmlFor="roster-method" className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
+            Payment
+          </label>
+          <div className="mt-2">
+            <Select
+              id="roster-method"
+              data-action="roster-method"
+              value={paging.method}
+              onChange={(value) => setFilter({ method: value })}
+              options={[
+                { value: "all", label: "All payments" },
+                { value: "cash", label: "Cash (any status)" },
+                { value: "utr", label: "UPI / UTR" },
               ]}
               className="w-[11rem]"
             />
@@ -1025,18 +1066,51 @@ function RosterTab({
                   {r.purchase_label ?? r.purchase_type ?? "—"}
                   {r.purchase_amount != null ? ` · ₹${r.purchase_amount}` : ""}
                 </p>
-                <p className="mt-1 font-mono text-xs text-ash">
-                  UTR: {r.utr_number || "—"} · submitted {when(r.utr_submitted_at)}
-                </p>
-                {/* Shown only when the row carries one. FREE FIRE is scored on
-                    the in-game ID, and a reconciler needs it on screen — not in
-                    a spreadsheet they have to open separately. */}
-                {r.free_fire_id ? (
+                {/* Cash and UPI are DIFFERENT records and were being displayed as
+                    the same row: a cash registration has no UTR and no submission
+                    time, so it printed "UTR: — · submitted —", which reads as a
+                    UTR payment that went wrong rather than a cash one that is
+                    perfectly normal. The method is now stated first, and the
+                    reference line only appears when there IS a reference to show.
+                    `awaiting_cash` against `verified` still distinguishes money
+                    due from money taken, so nothing is lost by not repeating the
+                    method on every cash row in prose. */}
+                {r.payment_method === "cash" ? (
                   <p
                     className="mt-1 font-mono text-xs text-gold"
-                    data-free-fire-id="true"
+                    data-payment-method="cash"
                   >
-                    Free Fire ID: {r.free_fire_id}
+                    CASH
+                    {r.payment_status === "awaiting_cash"
+                      ? " · money due at the desk"
+                      : r.payment_status === "verified"
+                        ? ` · cash received${r.payment_verified_by ? ` by ${r.payment_verified_by}` : ""}`
+                        : ""}
+                    {r.utr_number
+                      ? " · WARNING: a cash row carries a reference"
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="mt-1 font-mono text-xs text-ash" data-payment-method="utr">
+                    UTR: {r.utr_number || "—"} · submitted {when(r.utr_submitted_at)}
+                  </p>
+                )}
+                {/* Shown only when the row carries one. An event that asks for an
+                    identifier is checked on it at the venue, and a reconciler needs
+                    it on screen — not in a spreadsheet they have to open separately.
+
+                    `event_id_value ?? free_fire_id` because migration ...037 added the
+                    generic column and backfilled it, but rows written between the
+                    two migrations — and any row an older client creates — still
+                    only have the FREE FIRE one. Reading the new column alone would
+                    blank the ID on exactly the rows an operator most needs it on,
+                    which is the failure mode of a migration that looks complete. */}
+                {r.event_id_value || r.free_fire_id ? (
+                  <p
+                    className="mt-1 font-mono text-xs text-gold"
+                    data-event-id="true"
+                  >
+                    Event ID: {r.event_id_value || r.free_fire_id}
                   </p>
                 ) : null}
                 <p className="mt-1 font-mono text-xs text-ash">
@@ -1362,7 +1436,23 @@ function StaffTab({
     }
   }
 
-  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  /* Accepts BOTH shapes of value, because this form mixes two kinds of control.
+
+     <input onChange> hands back a DOM event and <Select> hands back the option's
+     VALUE. This setter serves both, and it used to read `e.target.value`
+     unconditionally - which meant the Role dropdown could only be wired by
+     FAKING an event around its value:
+         onChange={(value) => set("role")({ target: { value } })}
+     That worked and hid the trap rather than closing it: the next person to add
+     a <Select onChange={set(...)}> here would pass a bare string and get
+     `Cannot read properties of undefined`, and with no error boundary on this
+     route React would unmount the whole console to a blank page.
+
+     The identical crash is what the PROFILE page suffered on its college and
+     department dropdowns; it is fixed there the same way. Same shape in both
+     files, deliberately - one convention, not two. */
+  const set = (key) => (value) =>
+    setForm((f) => ({ ...f, [key]: value?.target ? value.target.value : value }));
 
   return (
     <section>
@@ -1430,7 +1520,7 @@ function StaffTab({
               id="staff-new-role"
               name="role"
               value={form.role}
-              onChange={(value) => set("role")({ target: { value } })}
+              onChange={(value) => set("role")(value)}
               options={ROLE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               className={inputClass}
             />
