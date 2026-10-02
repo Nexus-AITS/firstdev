@@ -56,6 +56,11 @@ const emptyEvent = {
   // Blank means "no limit", which is the state every event starts in. Sending
   // null (not "") is what the RPC reads as unlimited.
   max_registrations: "",
+  // Whether a leader must list their teammates here. TRUE for every event
+  // unless an operator says otherwise - FREE FIRE is the one exception, because
+  // its squad forms in game (migration ...035). Distinct from
+  // `team_formed_offsite`, which decides who PAYS.
+  roster_collected_on_site: true,
   // Same rule for the deadline: blank is OPEN, not "closed today". The column is
   // a calendar day (migration ...034), so the form carries a plain YYYY-MM-DD
   // and the database compares it in Asia/Kolkata - never as an instant.
@@ -88,6 +93,11 @@ function toEventForm(row) {
     entry_type: row.entry_type === "team" ? "team" : "individual",
     max_team_members: row.max_team_members ?? "",
     max_registrations: row.max_registrations ?? "",
+    // `?? true` rather than a bare read: a row written before migration ...035
+    // carries no value for this column, and an undefined here would render the
+    // checkbox as unticked — silently switching OFF the data collection the
+    // event has always done. The database default is true; this matches it.
+    roster_collected_on_site: row.roster_collected_on_site !== false,
     // The database stores a `date`, which PostgREST serialises as a bare
     // YYYY-MM-DD - the exact shape DateField parses. The `?? ""` is for a row
     // that predates migration ...034 and has no deadline at all.
@@ -127,12 +137,20 @@ function entryLabel(row) {
       ? "no limit"
       : `${row.registered_count ?? 0}/${row.max_registrations}${perTeam ? " squads" : ""}`;
   const who = perTeam ? "squad pays" : "per person";
+  // Whether this site lists the squad. A per_team event that does NOT is the
+  // FREE FIRE case: one leader pays, nobody's details are taken. Printing it
+  // stops an operator reading "12/20 squads" and assuming they can see the four
+  // names behind each one.
+  const roster =
+    row.entry_type === "team" && perTeam && row.roster_collected_on_site === false
+      ? " · no roster"
+      : "";
   // The last day is printed beside the cap because the two are the same
   // sentence: "12/20 squads, closes 5 Oct" tells an operator whether the number
   // is a running total or a closed book. A deadline in the PAST says so
   // explicitly rather than reading as a date that has not arrived.
   const closes = closeLabel(row.registration_closes_on);
-  return `${type} · ${who} · ${seats}${closes ? ` · ${closes}` : ""} · ${
+  return `${type} · ${who} · ${seats}${roster}${closes ? ` · ${closes}` : ""} · ${
     row.price == null ? "NO PRICE" : `₹${row.price}`
   }`;
 }
@@ -213,6 +231,12 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
       max_team_members: e.target.value === "team" ? f.max_team_members : "",
       team_formed_offsite:
         e.target.value === "team" ? f.team_formed_offsite : false,
+      // Same reasoning for the roster flag: a solo event collects no roster, so
+      // carrying a `false` behind a field that is no longer on screen would send
+      // back a value the operator cannot see and did not intend. Forced TRUE,
+      // which is what the RPC would do anyway.
+      roster_collected_on_site:
+        e.target.value === "team" ? f.roster_collected_on_site : true,
     }));
 
   function edit(row) {
@@ -264,6 +288,12 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
         // payment_mode cannot put a team event back on per-person payment.
         team_formed_offsite:
           form.entry_type === "team" ? !!form.team_formed_offsite : false,
+        // Whether the leader lists their squad here. Forced true for a solo
+        // event, matching the RPC. Sent even when false so a tick can be CLEARED
+        // — the RPC reads it by presence, so omitting it would leave the old
+        // value in place and the box would appear to save but not save.
+        roster_collected_on_site:
+          form.entry_type === "team" ? !!form.roster_collected_on_site : true,
         team_form_url: form.team_form_url.trim() === "" ? null : form.team_form_url.trim(),
         status: form.status.trim(),
         is_active: form.is_active,
@@ -533,6 +563,34 @@ function EventEditor({ events, token, onSaved, onError, onDeleted, canDelete }) 
                 Tick this when each member pays their own fee and the team is
                 assembled somewhere else. Leave it unticked and the leader pays
                 once for the whole squad and lists their teammates here.
+              </span>
+            </label>
+          </div>
+        ) : null}
+        {/* Only meaningful when the team pays as a team AND is not formed
+            offsite - an offsite squad is never listed here whatever this says, so
+            offering the box would be offering a control with no effect. Same
+            reason migration ...035 keeps the two facts apart, applied to the UI
+            so an operator is never shown a setting that does nothing. */}
+        {form.entry_type === "team" && !form.team_formed_offsite ? (
+          <div>
+            <label className={labelClass} htmlFor="cat-event-roster">
+              Collect teammate details
+            </label>
+            <label className="mt-2 flex items-start gap-2 font-mono text-[12px] text-bone">
+              <input
+                id="cat-event-roster"
+                data-action="cat-event-roster"
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!form.roster_collected_on_site}
+                onChange={set("roster_collected_on_site")}
+              />
+              <span>
+                Tick this to ask the leader for their teammates&apos; names, roll
+                numbers and contact details on this site. Untick it when the
+                squad is assembled elsewhere &mdash; the leader still pays the one
+                squad fee either way.
               </span>
             </label>
           </div>

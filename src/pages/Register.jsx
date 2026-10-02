@@ -1354,27 +1354,69 @@ export default function Register() {
                       registration ends on CONFIRM having paid nothing yet - the
                       operations team marks it verified when they take the money
                       at the desk. The AMOUNT is identical either way, so the
-                      choice is only about how the money arrives.
-
-                      There is no separate "spot registration" and never was:
-                      registering on the day is not a different product, it is a
-                      cash payment that the desk settles. So the copy sends the
-                      participant to the people who can actually authorise it -
-                      the coordinators on /contact - rather than describing a
-                      walk-up flow the site does not run. */}
+                      choice is only about how the money arrives. */}
                   {paid ? (
                     <fieldset id="reg-paymethod" className="flex flex-col gap-3">
                       <legend className={labelClass}>How would you like to pay?</legend>
+
+                      {/* CASH IS A HEADING, NOT A THIRD OPTION.
+                          Registering on the day is not a different product - it is
+                          a cash payment the desk settles - so it does not belong
+                          beside "Pay by UPI now" as an equal-weight radio. It is
+                          stated as what it actually is: an instruction to contact
+                          the coordinators first. The radio itself stays, and stays
+                          keyboard-reachable, so the flow and the roster states
+                          (awaiting_cash) are unchanged - this is presentation only.
+
+                          The heading is a real <h3> because it is a heading: a
+                          participant scanning the page should be able to reach it
+                          with a screen reader's heading navigation and find the
+                          instruction that differs from the default path. */}
+                      <div className="border border-gold/40 bg-gold/[0.07] px-5 py-5">
+                        <h3 className="font-display text-[clamp(1.25rem,3.2vw,1.9rem)] font-medium leading-tight tracking-[0.08em] text-gold [text-shadow:0_0_26px_rgba(245,215,142,0.35)]">
+                          Contact the coordinators for cash
+                        </h3>
+                        <p className="mt-3 text-sm leading-relaxed tracking-wide text-crystal/70">
+                          Registering by cash is arranged with the NEXUS
+                          coordinators, not at the desk on the day. Reach them on the{" "}
+                          <Link
+                            to="/contact"
+                            className="text-gold underline underline-offset-4 transition-colors hover:text-lavender"
+                          >
+                            contact page
+                          </Link>{" "}
+                          and they will confirm your seat and take the fee at the
+                          venue.
+                        </p>
+                        <label
+                          htmlFor="reg-pay-cash"
+                          className={`mt-4 inline-flex cursor-pointer items-center gap-3 border px-4 py-2.5 transition-colors ${
+                            payMethod === "cash"
+                              ? "border-gold bg-gold/20 text-gold"
+                              : "border-gold/40 text-crystal/70 hover:border-gold"
+                          }`}
+                        >
+                          <input
+                            id="reg-pay-cash"
+                            data-action="reg-pay-cash"
+                            type="radio"
+                            name="payment_method"
+                            checked={payMethod === "cash"}
+                            onChange={() => setPayMethod("cash")}
+                          />
+                          <span className="text-[11px] uppercase tracking-[0.24em]">
+                            {payMethod === "cash" ? "Selected" : "Choose cash"}
+                          </span>
+                        </label>
+                      </div>
+
+                      {/* The UPI path, which is the default and stays quiet - it
+                          needs no instruction, because it is the obvious one. */}
                       {[
                         {
                           id: "utr",
                           label: "Pay by UPI now",
                           help: "Scan the QR on the next screen and paste your UTR reference.",
-                        },
-                        {
-                          id: "cash",
-                          label: "Pay cash at the venue",
-                          help: "Nothing to scan. Contact the NEXUS coordinators first to arrange it — they will confirm your spot and take the fee at the desk.",
                         },
                       ].map((option) => (
                         <label

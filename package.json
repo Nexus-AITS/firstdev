@@ -48,6 +48,7 @@
     "verify:selection": "node scripts/verify-selection.mjs",
     "verify:catalogue": "node scripts/verify-catalogue.mjs",
     "verify:deadline": "node scripts/verify-deadline.mjs",
+    "verify:roster": "node scripts/verify-roster.mjs",
     "verify:contacts": "node scripts/verify-contacts.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
     "verify:profile": "node scripts/verify-profile.mjs",

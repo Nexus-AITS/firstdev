@@ -297,6 +297,15 @@ export const events = [
     // so the fee below is the squad's total, not a per-head rate. Every other
     // event leaves this unset and reads as per_person.
     paymentMode: "per_team",
+    // ...but this site does not LIST the squad. The four of them team up in the
+    // game lobby, and their names, roll numbers and phone numbers are of no use
+    // to the operations team — so the leader is not asked for them (migration
+    // ...035).
+    //
+    // Deliberately NOT `teamFormedOffsite: true`, which would also stop the
+    // roster but would flip paymentMode to per_person and turn this Rs 300
+    // squad fee into Rs 300 per head.
+    rosterCollectedOnSite: false,
     status: "REGISTRATION OPEN",
     accent: "violet",
     sigil: "squad",
@@ -388,12 +397,28 @@ export function getPaymentMode(event) {
  * use - because they are entered, and paid for, somewhere else. The two
  * questions are different and this one is the second.
  *
+ * THE THIRD CASE, ADDED BY MIGRATION ...035: a squad that pays as a squad but
+ * is assembled somewhere else anyway - FREE FIRE, where one leader pays the
+ * whole squad's fee and the four of them team up in game. That is NOT
+ * `team_formed_offsite` (which would make every member pay their own fee) and it
+ * is not an individual event. It is its own fact, and it is why the predicate
+ * reads a separate flag rather than inferring from the payment mode.
+ *
+ * The check is `=== false` rather than a truthiness test on purpose: a row from
+ * before the column existed, or an offline build with no live catalogue, reads
+ * undefined, and undefined must mean "collect", because the DB default is true.
+ * A participant losing their roster step to an inference would find out at the
+ * venue.
+ *
  * The cap is read, not hardcoded, because "up to 3" is a console decision: the
  * wizard renders the number the database returns rather than one compiled here.
  */
 export function requiresTeamRoster(event) {
   if (getEntryType(event) !== "team") return false;
   if (getPaymentMode(event) !== "per_team") return false;
+  // Migration ...035. A squad this site does not list collects no roster, however
+  // it pays. See the note above on why this is `=== false`.
+  if (event?.rosterCollectedOnSite === false) return false;
   return Number.isInteger(Number(event?.maxTeamMembers)) && Number(event.maxTeamMembers) > 0;
 }
 
@@ -609,6 +634,7 @@ const LIVE_OVERRIDES = [
   ["max_team_members", "maxTeamMembers"],
   ["payment_mode", "paymentMode"],
   ["team_formed_offsite", "teamFormedOffsite"],
+  ["roster_collected_on_site", "rosterCollectedOnSite"],
   ["status", "status"],
   ["price", "livePrice"],
   ["registration_closes_on", "registrationClosesOn"],
