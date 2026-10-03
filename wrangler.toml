@@ -1,0 +1,53 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nexus-mail",
+  "main": "workers/mail-worker.js",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The queue is a NUDGE, not a store. The jobs and their retry state live in
+  // Postgres (public.email_jobs); this only means "there is probably work now",
+  // so a sender wakes without polling. Losing this queue loses nothing — the
+  // jobs stay queued, their leases expire, and api/send-mail.js picks them up.
+  "queues": {
+    "producers": [
+      {
+        "binding": "MAIL_QUEUE",
+        "queue": "nexus-mail"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "nexus-mail",
+        "max_batch_size": 10,
+        // A batch waits briefly for more messages to fill it. Twenty seconds is
+        // the most a participant's inbox can be delayed by batching before the
+        // latency stops being worth it.
+        "max_batch_timeout": 20,
+        // The worker's own retries are a SAFETY NET, not the retry policy — the
+        // database does exponential jittered backoff. This only covers a worker
+        // that dies mid-batch, and stays small so the two do not compound.
+        "max_retries": 3,
+        "dead_letter_queue": "nexus-mail-dead"
+      }
+    ]
+  },
+
+  // Every one of these is a SECRET and belongs in `wrangler secret put <name>`,
+  // never in this file. They are listed as empty bindings on purpose: an empty
+  // binding is a deploy-time error you can see, whereas a key committed here is
+  // a leak you cannot.
+  //
+  //   wrangler secret put SUPABASE_URL
+  //   wrangler secret put SUPABASE_ANON_KEY
+  //   wrangler secret put MAIL_STAFF_TOKEN   <- a MASTER staff token, see below
+  //   wrangler secret put RESEND_API_KEY
+  //   wrangler secret put SENDER_EMAIL
+  "vars": {
+    "SUPABASE_URL": "",
+    "SUPABASE_ANON_KEY": "",
+    "MAIL_STAFF_TOKEN": "",
+    "RESEND_API_KEY": "",
+    "SENDER_EMAIL": ""
+  }
+}

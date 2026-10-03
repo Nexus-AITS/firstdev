@@ -708,6 +708,123 @@ export async function staffCreateRegistration(token, reg) {
   return { ok: true, id: body.id ?? null, error: null };
 }
 
+/* ---------- mail ---------- */
+
+/**
+ * One call for the whole Mail tab.
+ *
+ * Not four. The tab needs the merge-field list, the templates, the recent jobs
+ * and the queue counts, and an operator opens it mid-shift: four round trips is
+ * four chances to render a half-populated screen where "Send" is enabled and the
+ * audience is not yet known.
+ */
+export async function staffMailState(token, limit = 50) {
+  // `rpc` returns a TRANSPORT ENVELOPE - { ok, body, status } - where `body` is the
+  // RPC's own jsonb. The payload lives one level down. Reading fields off the
+  // envelope instead of the body returns undefined for every field without ever
+  // throwing: the call succeeds, the tab renders, and it is simply empty.
+  const res = await rpc("staff_mail_state", { p_limit: limit }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The mail tab could not load." };
+  }
+  const body = res.body ?? {};
+  return {
+    ok: true,
+    fields: body.fields ?? [],
+    templates: body.templates ?? [],
+    jobs: body.jobs ?? [],
+    counts: body.counts ?? {},
+    error: null,
+  };
+}
+
+export async function staffUpsertTemplate(token, template) {
+  const res = await rpc("staff_upsert_template", { p_template: template }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The template could not be saved." };
+  }
+  return { ok: true, id: res.body?.id ?? null, error: null };
+}
+
+/**
+ * Count the audience WITHOUT queueing anything.
+ *
+ * This is the blast-radius check, and it is a separate call rather than a
+ * confirmation dialog because the answer depends on the filter and the roster:
+ * "Verified, cash, FREE FIRE" is a number no operator can guess. The database
+ * does the counting, so it cannot disagree with what the send would select.
+ */
+export async function staffPreviewCampaign(token, campaign) {
+  const res = await rpc(
+    "staff_send_campaign",
+    {
+      p_name: campaign.name,
+      p_template_id: campaign.template_id || null,
+      p_subject: campaign.subject || "",
+      p_body: campaign.body || "",
+      p_event_id: campaign.event_id || null,
+      p_status: campaign.status || null,
+      p_method: campaign.method || null,
+      p_college: campaign.college || null,
+      p_confirm: false,
+    },
+    token
+  );
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The audience could not be counted." };
+  }
+  return { ok: true, recipients: res.body?.recipients ?? 0, error: null };
+}
+
+/** Queue the send. Master only — the server refuses anybody else. */
+export async function staffSendCampaign(token, campaign) {
+  const res = await rpc(
+    "staff_send_campaign",
+    {
+      p_name: campaign.name,
+      p_template_id: campaign.template_id || null,
+      p_subject: campaign.subject || "",
+      p_body: campaign.body || "",
+      p_event_id: campaign.event_id || null,
+      p_status: campaign.status || null,
+      p_method: campaign.method || null,
+      p_college: campaign.college || null,
+      p_confirm: true,
+    },
+    token
+  );
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The send could not be queued." };
+  }
+  return {
+    ok: true,
+    campaignId: res.body?.campaign_id ?? null,
+    recipients: res.body?.recipients ?? 0,
+    error: null,
+  };
+}
+
+/**
+ * Drain the queue now, by calling the sending function.
+ *
+ * A manual button rather than only a cron, because the first send of a season is
+ * always the one somebody is watching for. The function is what actually talks
+ * to Resend; this is only the trigger.
+ */
+export async function staffRunMailSender(token, { dryRun = false } = {}) {
+  // Same-origin: /api/send-mail is a serverless function deployed beside this
+  // app, so a relative URL is both correct and the only one that works on Vercel
+  // previews where the hostname changes per deployment.
+  const res = await fetch(`/api/send-mail${dryRun ? "?dry_run=1" : ""}`, {
+    method: "POST",
+    headers: { "X-Nexus-Staff-Token": token },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) return { ok: false, error: body?.error ?? `HTTP ${res.status}` };
+  return { ok: true, ...body };
+}
+
 export async function staffDeleteRegistration(token, id) {
   const res = await staffFetch(`registrations?id=eq.${encodeURIComponent(id)}`, {
     method: "DELETE",

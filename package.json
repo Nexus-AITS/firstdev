@@ -56,13 +56,17 @@
     "verify:event-id": "node scripts/verify-event-id.mjs",
     "verify:roster-crud": "node scripts/verify-roster-crud.mjs",
     "verify:event-id-field": "node scripts/verify-event-id-field.mjs",
+    "verify:mail": "node scripts/verify-mail.mjs",
+    "verify:mail-ui": "node scripts/verify-mail-ui.mjs",
     "verify:contacts": "node scripts/verify-contacts.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
     "verify:profile": "node scripts/verify-profile.mjs",
     "verify:register": "node scripts/verify-register.mjs",
     "db:query": "node scripts/db-query.mjs",
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
-    "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap"
+    "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap",
+    "mail:send": "node scripts/send-mail-local.mjs",
+    "mail:send:dry": "node scripts/send-mail-local.mjs --dry"
   },
   "dependencies": {
     "@react-three/fiber": "^9.1.0",

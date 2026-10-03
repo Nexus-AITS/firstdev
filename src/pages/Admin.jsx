@@ -50,6 +50,7 @@ import ContactManager from "../components/admin/ContactManager.jsx";
 import DestinationManager from "../components/admin/DestinationManager.jsx";
 import LookupManager from "../components/admin/LookupManager.jsx";
 import RegistrationEditor, { emptyRegistration } from "../components/admin/RegistrationEditor.jsx";
+import MailManager from "../components/admin/MailManager.jsx";
 import FinanceStrip from "../components/admin/FinanceStrip.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
 // used to build its price list from them, which meant an event created in the
@@ -72,6 +73,12 @@ const TABS = [
   // Contact channels are admin+ (the operations team that verifies payments is
   // the team that answers the phone), matching the RPC's own gate.
   { id: "contacts", label: "Contacts", action: "manage_contacts" },
+  // Mail is coordinator+ for TEMPLATES (staff_mail_state, staff_upsert_template)
+  // but the send button inside is master-only, matching staff_send_campaign. Gating
+  // the tab on "read" keeps it visible to the whole operations team — a template
+  // is shared copy, and hiding it from a coordinator hides the wording the
+  // coordinators are the ones reading aloud to participants.
+  { id: "mail", label: "Mail", action: "read" },
   // Where the roster is sent, and the keys a partner system reads it with.
   // Gated on manage_contacts (admin+) rather than manage_catalogue, because
   // sending data OUT is a decision about participant privacy, not about the
@@ -2243,6 +2250,11 @@ function Console({ session, onExpired }) {
         {/* Same shape of ownership as the catalogue and contacts: the tab loads
             and saves itself, so it takes no window, pager or reload wiring. */}
         {active?.id === "destinations" ? <DestinationManager session={session} /> : null}
+
+        {/* Mail owns its own fetch, like the catalogue, contacts and destinations
+            tabs. The send button inside is master-only, enforced again by
+            staff_send_campaign on the server. */}
+        {active?.id === "mail" ? <MailManager session={session} /> : null}
 
       {active?.id === "lookups" ? <LookupManager session={session} /> : null}
       </div>
