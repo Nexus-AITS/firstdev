@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The /problem-statements event + category filters, in a real browser, against
  * real published briefs.
  *
@@ -10,7 +10,7 @@
  * database happens to be in, so it passes before anything is published. That is
  * the right default for "is this route wired" and the wrong test for "does the
  * category filter work", because with no published briefs there are no dropdowns
- * to operate at all — the suite would pass while proving nothing. This one
+ * to operate at all â€” the suite would pass while proving nothing. This one
  * writes two events x two categories, drives both dropdowns, and removes
  * everything it wrote.
  *
@@ -77,7 +77,7 @@ const token = (await post("staff_login", {
   p_password: env.SUPABASE_STAFF_PASSWORD,
 }))?.token;
 if (!token) {
-  console.error("FAIL: could not sign in — the filters were NOT tested");
+  console.error("FAIL: could not sign in â€” the filters were NOT tested");
   process.exit(1);
 }
 const staff = { ...anon, "X-Nexus-Staff-Token": token };
@@ -181,16 +181,16 @@ try {
   const realCats = trackLabels.filter((l) => !/^All categories/i.test(l));
   out(
     realCats.length > 0 && realCats.every((l) => /\(\d+\)/.test(l)),
-    "…and every real category carries a count",
+    "â€¦and every real category carries a count",
     realCats.join(" | ")
   );
   out(
     !/\(\d+\)/.test(trackLabels[0] ?? ""),
-    "…while 'All categories' carries none, because there is nothing to count yet",
+    "â€¦while 'All categories' carries none, because there is nothing to count yet",
     trackLabels[0] ?? ""
   );
 
-  /* CATEGORY ALONE — the axis that did not exist before. */
+  /* CATEGORY ALONE â€” the axis that did not exist before. */
   await trackBox.click();
   await opt("statement-track-filter", CAT_A).click();
   await waitCount(1);
@@ -203,7 +203,7 @@ try {
 
   /* The selection must SURVIVE the refetch. Had the option's value changed shape
      between responses, the control would show its placeholder while the filter
-     was still applied — exactly the bug the SQL's lowercase value exists to stop. */
+     was still applied â€” exactly the bug the SQL's lowercase value exists to stop. */
   out(
     (await trackBox.innerText()).includes(CAT_A),
     "the control still shows the chosen category after refetching",
@@ -213,29 +213,57 @@ try {
   /* The event that has nothing in this category must stay OFFERED and be
      DISABLED, not dropped. Dropping it was the first implementation and it was
      wrong twice over: the reader cannot see that the combination is empty, and
-     with only one event left the whole control unmounted — taking their only way
+     with only one event left the whole control unmounted â€” taking their only way
      to widen the search with it. */
   await eventBox.click();
   const evLabels = await page
     .locator('[data-select-list="statement-event-filter"] [role="option"]')
     .allInnerTexts();
-  const disabled = await page
-    .locator('[data-select-list="statement-event-filter"] [role="option"][aria-disabled="true"]')
-    .allInnerTexts();
+  /* Read the option rows BEFORE pressing Escape. Escape unmounts the listbox, so
+     a read placed after it returns an empty array - which then reads as "no
+     zero-count options exist" rather than as "nothing was measured", and turns
+     the check below into a false failure. */
+  const evRows = await page
+    .locator('[data-select-list="statement-event-filter"] [role="option"]')
+    .evaluateAll((els) =>
+      els.map((el) => ({
+        text: (el.innerText || "").trim(),
+        count: Number(((el.innerText || "").match(/\((\d+)\)/) || [])[1] ?? -1),
+        disabled: el.getAttribute("aria-disabled") === "true",
+      }))
+    );
   await page.keyboard.press("Escape");
-  out(evLabels.length >= 3, "the event list still offers every event", evLabels.join(" | "));
   out(
-    disabled.length === 1 && disabled[0].includes(evs[1].title),
-    "…and the one with no brief in this category is offered but cannot be chosen",
-    disabled.join(" | ") || "none disabled"
-  );
-  out(
-    evLabels.some((l) => l.includes(evs[1].title)),
-    "…it is shown, not hidden, so the empty combination is visible",
+    evLabels.length >= 3 && evLabels.some((l) => l.includes(evs[1].title)),
+    "the event list still offers every event, the empty one included",
     evLabels.join(" | ")
   );
+  /* The INVARIANT, not a count. This first said "exactly one option is disabled",
+     which was only ever true while the database happened to hold exactly one
+     event with briefs. Publishing a real brief against a third event made two
+     options read (0), the assertion failed, and nothing about the product had
+     changed.
 
-  /* EVENT AND CATEGORY TOGETHER — the intersection. */
+     What must hold regardless of what an operator has written is that EVERY
+     zero-count option is disabled, and every option with briefs is not. Asserting
+     the shape rather than the census is what stops this test breaking every time
+     real data arrives - which is the whole reason this project stores its content
+     in a database instead of a component. */
+  const zeroRows = evRows.filter((r) => r.count === 0);
+  const wrongZero = zeroRows.filter((r) => !r.disabled);
+  const wrongLive = evRows.filter((r) => r.count > 0 && r.disabled);
+  out(
+    zeroRows.length > 0 && wrongZero.length === 0,
+    "…and EVERY event with no brief in this category is unselectable",
+    zeroRows.map((r) => r.text).join(" | ") || "no zero-count option appeared"
+  );
+  out(
+    wrongLive.length === 0,
+    "…while every event that does have one is still selectable",
+    wrongLive.map((r) => r.text).join(" | ") || "none wrongly disabled"
+  );
+
+  /* EVENT AND CATEGORY TOGETHER â€” the intersection. */
   await eventBox.click();
   await opt("statement-event-filter", evs[0].title).click();
   await waitCount(1);
@@ -243,7 +271,7 @@ try {
 
   /* Clearing one filter must keep the other applied and usable, or the reader is
      stuck. Alpha exists only in the first event, so clearing the event must NOT
-     change the result — which is exactly what it would do if the two filters were
+     change the result â€” which is exactly what it would do if the two filters were
      not really both applied. */
   await eventBox.click();
   await opt("statement-event-filter", "All events").click();
