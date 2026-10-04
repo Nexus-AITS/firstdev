@@ -1342,6 +1342,63 @@ export async function staffListAnnouncements(token) {
 }
 
 /** Create or edit. Admin+ — the database refuses anybody less. */
+/**
+ * Whether the site is accepting new registrations right now.
+ *
+ * Public and unauthenticated: a visitor who has to be told registration is closed
+ * has no session, and public_registration_gate() exists to tell them. It returns
+ * four fields and not the settings row, so nothing else in site_settings rides
+ * out with the answer.
+ *
+ * `ok: false` is NOT treated as "closed" here. A gate that cannot be read is a
+ * fault in the gate, and failing closed on a fault would take the site down; this
+ * falls back to open. The database - not this function - is what actually refuses
+ * a registration, so the worst case of a broken read is a form that submits and is
+ * then refused by the trigger, with the reason shown.
+ */
+export async function loadRegistrationGate() {
+  const res = await rpc("public_registration_gate", {}, null);
+  if (!res.ok) {
+    return { ok: false, open: true, note: null, closedAt: null, error: "unavailable" };
+  }
+  return {
+    ok: true,
+    open: res.body?.open !== false,
+    note: res.body?.note ?? null,
+    closedAt: res.body?.closed_at ?? null,
+    error: null,
+  };
+}
+
+/**
+ * The master switch: close or reopen registrations.
+ *
+ * Returns the gate the database actually stored, not what was asked for, so the
+ * caller repaints from the truth rather than from its own optimism.
+ */
+export async function staffSetRegistrationGate(token, open, note = null) {
+  const res = await rpc("staff_set_registration_gate", { p_open: open, p_note: note }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "Registrations could not be changed." };
+  }
+  return { ok: true, gate: res.body?.gate ?? null, error: null };
+}
+
+/** The console's read of the same gate. Coordinator and up. */
+export async function staffRegistrationGate(token) {
+  const res = await rpc("staff_registration_gate", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The gate could not be read." };
+  }
+  return {
+    ok: true,
+    open: res.body?.open !== false,
+    note: res.body?.note ?? null,
+    closedAt: res.body?.closed_at ?? null,
+    error: null,
+  };
+}
+
 export async function staffUpsertAnnouncement(token, announcement) {
   const res = await rpc("staff_upsert_announcement", { p_announcement: announcement }, token);
   if (!res.ok || res.body?.ok === false) {

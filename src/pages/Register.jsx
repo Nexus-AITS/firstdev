@@ -29,7 +29,7 @@ import { loadMyProfile } from "../data/profiles.js";
 import { PAYMENT_VPA, PAYEE_NAME, buildUpiUrl } from "../config/payment.js";
 import EventSelection from "../components/register/EventSelection.jsx";
 import TeamRoster from "../components/register/TeamRoster.jsx";
-import { loadLookups, setRegistrationEvents } from "../data/staff.js";
+import { loadLookups, setRegistrationEvents, loadRegistrationGate } from "../data/staff.js";
 
 /**
  * Registration wizard — the single place every event (and bundle) registration
@@ -187,8 +187,50 @@ export default function Register() {
      trg_event_registration_cap re-checks on the insert whatever this page
      concluded, so a stale "open" here costs a participant one round trip and a
      stale "closed" is impossible - the database is what actually decides. */
+  const [gate, setGate] = useState(null);
+
+  /* THE SITE-WIDE GATE, as distinct from this event's deadline.
+     Two different questions with two different answers, and conflating them would
+     be wrong in both directions: an event's date closing does not close the site,
+     and the organiser closing the site does not mean this event's deadline passed.
+     So the site gate is read separately and rendered as its own sentence - the
+     master's reason, in the master's words, because "closed" with no explanation
+     is what generates the queue of messages asking.
+
+     Read ONCE, with no polling and no reload dependency. It changes a handful of
+     times in the life of an event, and a participant sitting on this page through
+     the moment it closes is better served by the trigger refusing their submit
+     with the master's sentence than by the form changing under them.
+
+     Like the deadline below, this is a COURTESY. The trigger
+     trg_enforce_registration_gate re-checks on the insert regardless, so a stale
+     "open" costs one round trip and a stale "closed" is impossible. */
+  useEffect(() => {
+    let alive = true;
+    loadRegistrationGate().then((r) => {
+      if (alive && r.ok) setGate(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const closedEvent = event ? isRegistrationClosed(event.id) : false;
   const closesOn = event ? formatRegistrationCloses(event.id) : null;
+
+  /* THE SITE-WIDE GATE, as distinct from this event's deadline.
+     Two different questions with two different answers, and conflating them
+     would be wrong in both directions: an event's date closing does not close
+     the site, and the organiser closing the site does not mean this event's
+     deadline passed. So the site gate is read separately and rendered as its own
+     sentence - the master's reason, in the master's words, because "closed" with
+     no explanation is what generates the queue of messages asking.
+
+     Like the deadline above, this is a COURTESY. The trigger
+     trg_enforce_registration_gate re-checks on the insert regardless, so a stale
+     "open" here costs one round trip and a stale "closed" is impossible. */
+  const gateClosed = gate?.open === false;
+  const gateNote = gate?.note || "Registrations are closed.";
   const returnTo = event ? `/events/${event.id}` : bundle ? "/bundled" : "/events";
   // What the participant is buying — recorded on the row (purchase_type +
   // purchase_label) so the admin panel can show which event / which bundle.
@@ -1166,8 +1208,17 @@ export default function Register() {
                   why. This names the date, and points at the event page and the
                   contact channels, because "closed" with no next step is the one
                   answer that strands a participant who arrived on the wrong day. */}
-              {signedIn && closedEvent ? (
-                <div id="reg-closed" className="flex flex-col items-center gap-6 py-6 text-center">
+              {/* The SITE gate is shown to EVERYONE, signed in or not. That is the whole
+                    point of it: a visitor who arrives, sees only "sign in to
+                    register", and has no way to learn registration has shut until
+                    they have signed in. That is how "the site is closed" turns
+                    into a queue of messages asking.
+
+                    The per-event DEADLINE stays behind sign-in, unchanged - it is
+                    per-event detail a participant only needs once they are here
+                    to register for it. */}
+              {gateClosed || (signedIn && closedEvent) ? (
+                <div id="reg-closed" data-closed-for={gateClosed ? "gate" : "event"} className="flex flex-col items-center gap-6 py-6 text-center">
                   <header>
                     <p className="text-[10px] uppercase tracking-[0.4em] text-gold/85">
                       {contextTitle}
@@ -1177,11 +1228,21 @@ export default function Register() {
                     </h2>
                   </header>
                   <p className="max-w-md text-sm leading-relaxed text-crystal/60">
-                    {closesOn
-                      ? `Sign-ups for this event closed on ${closesOn}.`
-                      : "Sign-ups for this event are closed."}{" "}
-                    The event itself may still be running — this only means new
-                    registrations are no longer being taken.
+                    {/* The two closures get DIFFERENT sentences. The site gate
+                        shows the master's own reason, because a site-wide close
+                        nearly always has a cause worth stating; the per-event
+                        deadline shows its date, because that is the whole of what
+                        is known about it. Saying "closed" and nothing else is the
+                        one answer that strands somebody who arrived on the wrong
+                        day. */}
+                    {gateClosed
+                      ? gateNote
+                      : closesOn
+                        ? `Sign-ups for this event closed on ${closesOn}.`
+                        : "Sign-ups for this event are closed."}{" "}
+                    {gateClosed
+                      ? "Every event is closed for new registrations right now."
+                      : "The event itself may still be running — this only means new registrations are no longer being taken."}
                   </p>
                   <div className="flex flex-wrap items-center justify-center gap-6">
                     <Link

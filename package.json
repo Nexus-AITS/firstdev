@@ -61,10 +61,11 @@
     "verify:mail-ui": "node scripts/verify-mail-ui.mjs",
     "verify:content": "node scripts/verify-content.mjs",
     "verify:content-ui": "node scripts/verify-content-ui.mjs",
-  "verify:statements-ui": "node scripts/verify-statements-ui.mjs",
-  "verify:nav-fit": "node scripts/verify-nav-fit.mjs",
-  "verify:finance-refresh": "node scripts/verify-finance-refresh.mjs",
-  "db:apply-one": "node scripts/apply-one.mjs",
+    "verify:statements-ui": "node scripts/verify-statements-ui.mjs",
+    "verify:nav-fit": "node scripts/verify-nav-fit.mjs",
+    "verify:finance-refresh": "node scripts/verify-finance-refresh.mjs",
+    "verify:registration-gate": "node scripts/verify-registration-gate.mjs",
+    "db:apply-one": "node scripts/apply-one.mjs",
     "verify:contacts": "node scripts/verify-contacts.mjs",
     "verify:freeze": "node scripts/verify-freeze.mjs",
     "verify:profile": "node scripts/verify-profile.mjs",
@@ -73,7 +74,8 @@
     "db:sync-pricing": "node scripts/sync-pricing.mjs",
     "staff:bootstrap": "node scripts/grant-staff.mjs bootstrap",
     "mail:send": "node scripts/send-mail-local.mjs",
-    "mail:send:dry": "node scripts/send-mail-local.mjs --dry"
+    "mail:send:dry": "node scripts/send-mail-local.mjs --dry",
+    "verify:gate-ui": "node scripts/verify-gate-ui.mjs"
   },
   "dependencies": {
     "@react-three/fiber": "^9.1.0",
@@ -95,4 +97,3 @@
     "vite": "^6.3.5"
   }
 }
-

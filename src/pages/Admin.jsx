@@ -54,6 +54,7 @@ import MailManager from "../components/admin/MailManager.jsx";
 import AnnouncementManager from "../components/admin/AnnouncementManager.jsx";
 import ProblemStatementManager from "../components/admin/ProblemStatementManager.jsx";
 import FinanceStrip from "../components/admin/FinanceStrip.jsx";
+import RegistrationGate from "../components/admin/RegistrationGate.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
 // used to build its price list from them, which meant an event created in the
 // Catalogue tab had no row to edit and a price for a deleted event was invisible.
@@ -2270,6 +2271,20 @@ function Console({ session, onExpired }) {
                 this is the same guarantee for a tab switch that version gives for
                 a refresh. */}
             <FinanceStrip token={session.token} version={`${active?.id}-${dataVersion}`} />
+
+            {/* The site-wide kill switch, above the roster. It reads the same row
+                the insert trigger enforces, so the console can never claim OPEN
+                while the database is refusing. dataVersion is passed for the same
+                reason it is passed to FinanceStrip: a gate read once at mount goes
+                on lying after somebody else changes it. onChanged re-reads the
+                roster too, so closing the gates does not leave a stale count on
+                screen beside a fresh switch. */}
+            <RegistrationGate
+              token={session.token}
+              isMaster={session.role === "master"}
+              version={dataVersion}
+              onChanged={() => reload("roster")}
+            />
             <RosterTab
               session={session}
               window={rows.registrations}
