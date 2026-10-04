@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { staffFinanceSummary } from "../../data/staff.js";
 
 /**
- * The two money figures, above the roster.
+ * The money figures, above the roster.
  *
  *   TO VERIFY  - referenced, not yet checked against the bank. The queue.
  *   RECEIVED   - verified. Money that has arrived.
@@ -17,8 +17,23 @@ import { staffFinanceSummary } from "../../data/staff.js";
  * most likely to be quietly forgotten. UNPRICED is a data gap, not money: those
  * rows have no amount because no price was ever set, and they are shown so the
  * sums above are known to be complete rather than assumed to be.
+ *
+ * WHY `version` EXISTS
+ *
+ * This component fetches for itself, so nothing about the console's Refresh
+ * button used to reach it: the effect depended only on the token, the figures
+ * were read once when the tab mounted, and every later refresh left them
+ * describing the previous load. The roster rows underneath refreshed correctly,
+ * which is what made it dangerous rather than merely wrong — an operator
+ * confirming a payment would watch the list change and the total sit still, and
+ * have no way to tell a stale figure from a payment that did not land.
+ *
+ * `version` is a counter the console bumps after every successful reload. It is
+ * a prop rather than a subscription because the refresh is an EVENT, not a
+ * change in the data the strip can see: it is told when to re-read, the same way
+ * the data tabs are told.
  */
-export default function FinanceStrip({ token, onError }) {
+export default function FinanceStrip({ token, version }) {
   const [summary, setSummary] = useState(null);
   const [failed, setFailed] = useState(null);
 
@@ -35,7 +50,15 @@ export default function FinanceStrip({ token, onError }) {
     });
   }, [token]);
 
-  useEffect(load, [load]);
+  /* `version` is in the dependency list, and that is the whole fix: the console
+     bumps it after every reload, so Refresh re-reads these figures instead of
+     leaving them on the load that happened when the tab first mounted.
+
+     It is a plain counter rather than the rows themselves on purpose. Handing
+     this component the roster window would make it refetch on every keystroke in
+     the roster's search box, which is a round trip per character for a sum that
+     does not depend on the search. */
+  useEffect(load, [load, version]);
 
   if (failed) {
     return (

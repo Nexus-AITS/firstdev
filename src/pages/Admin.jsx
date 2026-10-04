@@ -2092,6 +2092,13 @@ function Console({ session, onExpired }) {
     }
   }, [remaining, signedOut, onExpired]);
 
+  /* Bumped by every successful reload. The data tabs hold their own state and
+     re-read themselves; components that fetch on their own — the money strip
+     above the roster — cannot see that happening, so this counter is how the
+     console tells them "the data you are showing has moved". Without it, Refresh
+     updated the roster and left the totals describing the previous load. */
+  const [dataVersion, setDataVersion] = useState(0);
+
   const reload = useCallback(
     async (tabId, override) => {
       const spec = LIST_BY_TAB[tabId];
@@ -2116,6 +2123,10 @@ function Console({ session, onExpired }) {
         error: null,
       };
       setRows((prev) => ({ ...prev, [spec.key]: nextWindow }));
+      // Told to everyone who fetches for themselves, in the same tick the rows
+      // land. Bumping after the rows means the strip cannot briefly show a total
+      // that disagrees with a list that has already moved.
+      setDataVersion((v) => v + 1);
       // An edit can remove the last row of the final page (a registration
       // removed, a filter narrowed). Sitting on page 3 of 3 and then reading
       // "0 rows" is a dead end for the operator, so step back to the last page
@@ -2247,7 +2258,18 @@ function Console({ session, onExpired }) {
                 hand, and answering them with one combined number is how a
                 payment gets written off as collected before anyone has seen the
                 bank statement. */}
-            <FinanceStrip token={session.token} />
+            {/* version: the money figures are fetched by their OWN effect, which
+                depends only on the token — so pressing Refresh updated the rows
+                underneath and left these stale, which is worse than not showing
+                them at all: an operator who confirms a payment watches the list
+                change and the total not move. dataVersion is bumped by every
+                reload, so Refresh now re-reads the money with the rows.
+
+                tab is passed rather than read, so switching to Roster re-reads the
+                figures too — the tab is unmounted while another one is active, so
+                this is the same guarantee for a tab switch that version gives for
+                a refresh. */}
+            <FinanceStrip token={session.token} version={`${active?.id}-${dataVersion}`} />
             <RosterTab
               session={session}
               window={rows.registrations}

@@ -1362,21 +1362,39 @@ export async function staffRetireAnnouncement(token, id) {
 /* ---------- problem statements ---------- */
 
 /**
- * The briefs /problem-statements renders, optionally narrowed to one event.
+ * The briefs /problem-statements renders, narrowed by event and/or category.
  *
- * Public and unauthenticated for the same reason the announcements are. Passing
- * null returns everything, which is what the page asks for before somebody picks
- * an event from the filter.
+ * Public and unauthenticated for the same reason the announcements are. BOTH
+ * filters are passed to the database rather than applied here: the page used to
+ * fetch everything once and narrow it in the browser, which meant a reader
+ * filtering a long list of briefs was filtering data nobody had asked for, and
+ * the database never learned which briefs anybody actually reads.
+ *
+ * `events` and `tracks` are the two dropdown lists. Each option carries a count
+ * FACETED by the OTHER filter, and the page disables a zero-count option — that
+ * is what stops a reader picking an event and a category that have no brief
+ * between them and landing on an empty page.
  */
-export async function loadPublicProblemStatements(eventId = null) {
-  const res = await rpc("public_problem_statements", { p_event_id: eventId }, null);
+export async function loadPublicProblemStatements(eventId = null, track = null) {
+  const res = await rpc(
+    "public_problem_statements",
+    { p_event_id: eventId, p_track: track },
+    null
+  );
   if (!res.ok) {
-    return { ok: false, statements: [], events: [], error: "Problem statements are unavailable right now." };
+    return {
+      ok: false,
+      statements: [],
+      events: [],
+      tracks: [],
+      error: "Problem statements are unavailable right now.",
+    };
   }
   return {
     ok: true,
     statements: res.body?.statements ?? [],
     events: res.body?.events ?? [],
+    tracks: res.body?.tracks ?? [],
     error: null,
   };
 }

@@ -8,9 +8,18 @@
  * statements tab, and this page renders whatever the database says — including
  * nothing at all, which it says plainly rather than showing an empty frame.
  *
- * The event filter offers only events that actually HAVE a brief. That is computed
- * in the database (public_problem_statements returns the distinct events alongside
- * the briefs) so choosing an event can never produce a blank page.
+ * Browsable two ways, because a brief is filed under BOTH an event and a category
+ * and a reader usually arrives knowing only one of them: a team that has registered
+ * for NEXUS BREACH wants that event's briefs, and a team with no idea which event
+ * it is entering wants everything filed under SUSTAINABILITY. Both filters are
+ * applied by the database (public_problem_statements takes an event and a
+ * category), not in the browser.
+ *
+ * The event filter offers only events that actually HAVE a brief, and the category
+ * filter only categories that exist — each carrying the count of what picking it
+ * would leave you with, counted against the OTHER filter. That is what stops a
+ * reader choosing an event and a category with nothing between them and landing on
+ * an empty page: the combination is offered greyed out rather than offered at all.
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -71,41 +80,88 @@ function StatementCard({ item }) {
 }
 
 export default function ProblemStatements() {
-  const [state, setState] = useState({ status: "loading", statements: [], events: [], error: null });
+  const [state, setState] = useState({
+    status: "loading",
+    statements: [],
+    events: [],
+    tracks: [],
+    error: null,
+  });
   const [eventId, setEventId] = useState("");
+  const [track, setTrack] = useState("");
 
   // `events` is kept from the unfiltered response rather than re-fetched per
   // selection, so switching the filter is instant and never flashes "no events".
   useEffect(() => {
     let alive = true;
-    loadPublicProblemStatements(null).then((result) => {
+    setState((s) => ({ ...s, status: "loading" }));
+    loadPublicProblemStatements(eventId || null, track || null).then((result) => {
       if (!alive) return;
       if (result.ok) {
-        setState({ status: "ready", statements: result.statements, events: result.events, error: null });
+        setState({
+          status: "ready",
+          statements: result.statements,
+          events: result.events,
+          tracks: result.tracks,
+          error: null,
+        });
       } else {
-        setState({ status: "error", statements: [], events: [], error: result.error });
+        setState({ status: "error", statements: [], events: [], tracks: [], error: result.error });
       }
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [eventId, track]);
 
+  /* The count beside each option is FACETED by the other filter, so a zero means
+     "nothing here with what you have already chosen". Those options are disabled
+     rather than hidden: visible-but-unavailable tells the reader the combination
+     exists and is empty, which is the difference between "I filtered it away" and
+     "it was never there".
+
+     The option ALREADY selected is never disabled, even at zero. Disabling the
+     reader's current choice would leave a dropdown asserting that its own value
+     cannot be selected, and would make the way out "pick something else" rather
+     than "clear the filter". */
   const options = useMemo(
     () => [
       { value: "", label: "All events" },
-      ...state.events.map((e) => ({ value: e.id, label: e.title })),
+      ...state.events.map((e) => ({
+        value: e.id,
+        label: `${e.title} (${e.count})`,
+        disabled: e.id !== eventId && e.count === 0,
+      })),
     ],
-    [state.events]
+    [state.events, eventId]
+  );
+
+  const trackOptions = useMemo(
+    () => [
+      { value: "", label: "All categories" },
+      ...state.tracks.map((t) => ({
+        // `name` is the lowercased category — stable across responses, so the
+        // control keeps its selection when the other filter changes the rows.
+        value: t.name,
+        label: `${t.label} (${t.count})`,
+        disabled: t.name !== track && t.count === 0,
+      })),
+    ],
+    [state.tracks, track]
   );
 
   // Filtered here rather than by asking the database again. The whole list is
   // already in memory — a handful of briefs, not a roster — so a second round trip
   // per click would be latency for nothing.
-  const visible = useMemo(
-    () => (eventId ? state.statements.filter((s) => s.event_id === eventId) : state.statements),
-    [state.statements, eventId]
-  );
+  /* Nothing to choose between is not a control: a dropdown offering one real
+     option can only ever return that option, and reads as a broken filter. */
+  const showEventFilter = state.events.length > 1;
+  const showTrackFilter = state.tracks.length > 1;
+
+  const visible = state.statements;
+  /* "Nothing published yet" and "your filter matched nothing" need different
+     replies from the reader, so the page has to know whether it is filtering. */
+  const filtered = Boolean(eventId || track);
 
   return (
     <Page>
@@ -130,32 +186,61 @@ export default function ProblemStatements() {
         </section>
 
         <section className="relative z-10 mx-auto mt-16 max-w-[1000px] px-5 pb-32 md:px-10">
-          {/* The filter only appears when there is something to choose between.
+          {/* The filters only appear when there is something to choose between.
               One option rendered as a dropdown is a dropdown that can only ever
-              return its own value. */}
-          {state.status === "ready" && state.events.length > 1 ? (
-            <div className="mb-8 flex justify-center">
-              <div className="w-full max-w-xs">
-                <label
-                  className="block text-center font-mono text-[10px] uppercase tracking-[0.3em] text-ash"
-                  htmlFor="statement-event-filter"
-                >
-                  Event
-                </label>
-                <Select
-                  id="statement-event-filter"
-                  className="mt-2"
-                  value={eventId}
-                  onChange={(v) => setEventId(v ?? "")}
-                  options={options}
-                />
-              </div>
+              return its own value.
+
+              Two of them, because a brief is filed under BOTH an event and a
+              category and a reader usually knows only one of the two. They sit side
+              by side rather than stacked so the pair reads as one control, and each
+              carries the count of what it would leave you with. */}
+          {state.status === "ready" && (showEventFilter || showTrackFilter) ? (
+            <div className="mb-8 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-5">
+              {showEventFilter ? (
+                <div className="w-full max-w-[16rem]">
+                  <label
+                    className="block text-center font-mono text-[10px] uppercase tracking-[0.3em] text-ash"
+                    htmlFor="statement-event-filter"
+                  >
+                    Event
+                  </label>
+                  <Select
+                    id="statement-event-filter"
+                    className="mt-2"
+                    value={eventId}
+                    onChange={(v) => setEventId(v ?? "")}
+                    options={options}
+                  />
+                </div>
+              ) : null}
+
+              {showTrackFilter ? (
+                <div className="w-full max-w-[16rem]">
+                  <label
+                    className="block text-center font-mono text-[10px] uppercase tracking-[0.3em] text-ash"
+                    htmlFor="statement-track-filter"
+                  >
+                    Category
+                  </label>
+                  <Select
+                    id="statement-track-filter"
+                    className="mt-2"
+                    value={track}
+                    onChange={(v) => setTrack(v ?? "")}
+                    options={trackOptions}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
 
           <h2 className="sr-only">All problem statements</h2>
 
-          {state.status === "loading" ? (
+          {/* Only on the FIRST load. Every filter change also sets `status` to loading, and
+              blanking the list to a spinner on each click turns two dropdowns into
+              something that flickers. On a refetch the current briefs stay put and
+              the region is marked busy instead. */}
+          {state.status === "loading" && state.statements.length === 0 ? (
             <p
               aria-live="polite"
               className="border border-line px-5 py-6 text-center font-mono text-[11px] uppercase tracking-[0.3em] text-ash"
@@ -174,23 +259,45 @@ export default function ProblemStatements() {
           ) : null}
 
           {state.status === "ready" && visible.length === 0 ? (
-            /* Distinguishes "nothing published at all" from "this event has none",
-               because the two need different replies from the reader and a single
-               empty box cannot tell them apart. */
+            /* Three different situations, three different replies.
+               "Nothing published yet" is an absence of content and the operator's
+               to fix. "No brief matches" is the READER's filter and is their to
+               undo, so it gets a button that undoes it rather than a sentence
+               telling them to go and choose something else. */
             <p className="border border-line px-5 py-8 text-center">
               <span className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash">
-                {state.statements.length === 0 ? "Nothing published yet" : "No brief for this event"}
+                {filtered ? "No brief matches" : "Nothing published yet"}
               </span>
               <span className="mt-4 block text-sm leading-relaxed text-crystal/60">
-                {state.statements.length === 0
-                  ? "Problem statements have not been published yet. The event pages still carry each event's description."
-                  : "That event has no brief published. Pick another event, or check back before the event starts."}
+                {filtered
+                  ? "That event and category have no brief between them. Clear the filter to see everything that has been published."
+                  : "Problem statements have not been published yet. The event pages still carry each event's description."}
               </span>
+              {filtered ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEventId("");
+                    setTrack("");
+                  }}
+                  className="mt-6 border border-line px-5 py-2 font-mono text-[11px] uppercase tracking-[0.3em] text-lavender transition hover:border-lavender/60"
+                >
+                  Clear filters
+                </button>
+              ) : null}
             </p>
           ) : null}
 
-          {state.status === "ready" && visible.length > 0 ? (
-            <ul className="grid gap-5" data-action="statement-list">
+          {/* The list stays rendered while a refetch is in flight, dimmed and marked busy.
+             aria-busy is the honest signal: a screen reader is told the region is
+             being updated instead of being handed a stale list as if it were final. */}
+          {visible.length > 0 ? (
+            <ul
+              className="grid gap-5 transition-opacity duration-200"
+              data-action="statement-list"
+              aria-busy={state.status === "loading" ? "true" : undefined}
+              style={state.status === "loading" ? { opacity: 0.55 } : undefined}
+            >
               {visible.map((item) => (
                 <StatementCard key={item.id} item={item} />
               ))}

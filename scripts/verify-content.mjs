@@ -170,31 +170,182 @@ try {
 
   /* ---------- 5. problem statements ---------- */
 
-  const event = (stmts?.events ?? [])[0];
+  /* Two events and two categories, so the two filters can be checked AGAINST EACH
+     OTHER rather than in isolation — a filter proved only on its own passes just
+     as well when it is a client-side `Array.filter`.
+
+     The events come from the catalogue, NOT from `stmts.events`. That list holds
+     only events that already have a published brief, so on a database where
+     nothing is published yet it is empty — and reading the event under test out
+     of it made this whole block skip silently, which is the failure mode this
+     suite exists to prevent. An event is something that exists whether or not
+     anybody has written about it. */
+  const CATS = ["sustainability", "fintech"];
+  const evtRows = sql
+    ? await sql(
+        `select c.id from public.event_catalogue c
+          where c.is_active
+          order by c.title limit 2;`
+      )
+    : null;
+  const evts = Array.isArray(evtRows) ? evtRows.map((r) => r?.id).filter(Boolean) : [];
+  out(
+    evts.length >= 1,
+    "at least one catalogue event is available to file briefs against",
+    evts.join(", ") || "none — the filter checks below did NOT run"
+  );
+
+  const event = evts[0] ?? null;
+  const event2 = evts[1] ?? event;
+
+  /* One brief carries a category, one carries a differently-cased and padded one
+     (free text typed by an operator is rarely tidy, and a category filter that
+     cannot find its own category has failed at the only thing it exists to do),
+     one belongs to the SECOND event under the second category, and one has no
+     event and no category at all. */
+  const seeds = [
+    { event_id: event, track: CATS[0] },
+    { event_id: event, track: `  ${CATS[1][0].toUpperCase()}${CATS[1].slice(1)}  ` },
+    { event_id: event2, track: CATS[1] },
+    { event_id: null, track: null },
+  ];
+
   const made = await rpc(token, "staff_upsert_problem_statement", {
     p_statement: {
       title: TITLE,
       summary: "probe summary",
       detail: "probe detail",
-      event_id: event?.id ?? null,
+      event_id: event,
       is_active: true,
     },
   });
   out(made?.ok === true, "a master can write a problem statement", made?.error ?? "");
   ids.statement = made?.id ?? null;
 
-  const pubStmts = await rpc(null, "public_problem_statements", { p_event_id: null });
+  const extra = [];
+  for (const [i, seed] of seeds.entries()) {
+    const r = await rpc(token, "staff_upsert_problem_statement", {
+      p_statement: {
+        title: `${TITLE} ${i}`,
+        summary: "probe summary",
+        event_id: seed.event_id,
+        track: seed.track,
+        is_active: true,
+      },
+    });
+    if (r?.id) extra.push(r.id);
+  }
+  ids.statements = extra;
+  out(extra.length === seeds.length, "…and several more, across events and categories");
+
+  const pubStmts = await rpc(null, "public_problem_statements", { p_event_id: null, p_track: null });
   out(
     (pubStmts?.statements ?? []).some((s) => s.title === TITLE),
     "and it appears on the public page"
   );
 
-  if (event?.id) {
-    const narrowed = await rpc(null, "public_problem_statements", { p_event_id: event.id });
+  /* THE POINT OF THE FEATURE: both filters reach the database, not the browser.
+     Each is proved by narrowing, and each is proved to leave the OTHER list
+     usable — a category filter that returned the right rows but emptied the event
+     dropdown would leave the reader unable to switch back. */
+  if (event) {
+    const narrowed = await rpc(null, "public_problem_statements", {
+      p_event_id: event,
+      p_track: null,
+    });
     out(
       (narrowed?.statements ?? []).some((s) => s.title === TITLE),
-      "and narrows to one event",
-      event.id
+      "narrowing to one event keeps that event's briefs",
+      event
+    );
+
+    const byCat = await rpc(null, "public_problem_statements", {
+      p_event_id: null,
+      p_track: CATS[0],
+    });
+    const byCatTitles = (byCat?.statements ?? []).map((s) => s.title);
+    out(
+      byCatTitles.includes(`${TITLE} 0`) && !byCatTitles.includes(`${TITLE} 1`),
+      "narrowing to a category drops the briefs filed under another",
+      byCatTitles.join(", ")
+    );
+
+    const messy = await rpc(null, "public_problem_statements", {
+      p_event_id: null,
+      p_track: `  ${CATS[1][0].toUpperCase()}${CATS[1].slice(1)}  `,
+    });
+    out(
+      (messy?.statements ?? []).some((s) => s.title === `${TITLE} 1`),
+      "a category typed in a different case, padded with spaces, still finds its brief"
+    );
+
+    const both = await rpc(null, "public_problem_statements", {
+      p_event_id: event,
+      p_track: CATS[0],
+    });
+    out(
+      (both?.statements ?? []).length === 1 && both.statements[0].title === `${TITLE} 0`,
+      "event AND category together narrow to exactly their intersection",
+      (both?.statements ?? []).map((s) => s.title).join(", ")
+    );
+
+    /* The faceted counts, and the dead end they exist to prevent. The LIST is not
+       narrowed — only the COUNT is — because narrowing the list made the event
+       dropdown vanish the moment one category matched one event, taking the
+       reader's only route back with it. So the event with nothing in this
+       category is still listed, carrying a zero. */
+    const evsUnderCat = (byCat?.events ?? []).map((e) => e.id);
+    const mine = (byCat?.events ?? []).find((e) => e.id === event);
+    const theirs = (byCat?.events ?? []).find((e) => e.id === event2 && e.id !== event);
+    out(
+      mine != null && mine.count > 0,
+      "the event with a brief in this category is offered, with a count",
+      mine ? `${mine.title}=${mine.count}` : "not offered"
+    );
+    out(
+      evsUnderCat.includes(event),
+      "the event list is NOT narrowed by the category, so the control cannot collapse",
+      evsUnderCat.join(", ")
+    );
+    if (theirs) {
+      out(
+        theirs.count === 0,
+        "an event with no brief in this category is listed with a count of ZERO, for the page to disable",
+        `${theirs.title}=${theirs.count}`
+      );
+
+      /* …and the zero is honest: that combination really is an empty page. */
+      const deadEnd = await rpc(null, "public_problem_statements", {
+        p_event_id: event2,
+        p_track: CATS[0],
+      });
+      out(
+        (deadEnd?.statements ?? []).length === 0,
+        "…and that combination would indeed have been an empty page"
+      );
+    }
+
+    const catNames = (byCat?.tracks ?? []).map((t) => t.name);
+    out(
+      catNames.includes(CATS[0]) && catNames.includes(CATS[1]),
+      "the category list survives an event filter",
+      catNames.join(", ")
+    );
+    out(
+      catNames.every((n) => n === n.toLowerCase()),
+      "…and every category value is lowercased, so a selection survives a refetch"
+    );
+
+    /* A brief with no category stays reachable under "all categories" and never
+       appears as an empty row in the category dropdown. */
+    const allCats = await rpc(null, "public_problem_statements", {
+      p_event_id: null,
+      p_track: null,
+    });
+    out(
+      (allCats?.statements ?? []).some((s) => s.title === `${TITLE} 3`) &&
+        (allCats?.tracks ?? []).every((t) => (t.name ?? "").trim() !== ""),
+      "a brief with no category is browsable, and the category list has no blank row"
     );
   }
 
