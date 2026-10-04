@@ -36,12 +36,25 @@ export const ROLE_META = {
       "view_audit",
       "manage_catalogue",
       "manage_contacts",
+      // Public CONTENT an operator keeps current: announcements and the hackathon
+      // problem statements. Its own capability rather than a reuse of
+      // "manage_contacts", so the database's staff_at_least('admin') gate on
+      // staff_upsert_announcement / staff_upsert_problem_statement and this list
+      // can be widened together - and so a coordinator reading the roster can be
+      // given the wording WITHOUT the ability to publish it.
+      "manage_content",
       // PERMANENT removal. Its own capability rather than a reuse of "remove",
       // which is the roster's soft delete: keeping them apart means a master can
       // be given the one without the other, and the UI can say "delete" only
       // where the database's staff_at_least('master') check will agree. The two
       // must be changed together - if you widen this, widen the RPC too.
       "delete_catalogue",
+      // PERMANENT removal of public CONTENT, for the same reason delete_catalogue
+      // is separate: retire is recoverable and delete is not, so they must be
+      // separable. Master only — an admin may retire an announcement but not erase
+      // one. Must be widened together with staff_delete_announcement's
+      // staff_at_least('master') gate, never alone.
+      "delete_content",
     ],
     blurb:
       "Full control: verify or reject payments, remove registrations, manage staff, set prices, edit the event and bundle catalogue, and permanently delete an event, bundle or contact that was never real.",
@@ -54,9 +67,9 @@ export const ROLE_META = {
     // staff_at_least('admin') gate — if you want masters only, change both.
     // No "delete_catalogue": an admin may publish a channel and retire it, but
     // erasing one is a master's decision.
-    can: ["read", "verify", "reject", "view_audit", "manage_contacts"],
+    can: ["read", "verify", "reject", "view_audit", "manage_contacts", "manage_content"],
     blurb:
-      "Accept or reject participants, review the audit log, and publish the contact details on the public contact page. Cannot remove registrations, manage staff, change prices, or delete anything.",
+      "Accept or reject participants, review the audit log, publish the contact details on the public contact page, and write announcements and problem statements. Cannot remove registrations, manage staff, change prices, or delete anything.",
   },
   coordinator: {
     label: "Coordinator",
@@ -405,6 +418,16 @@ function qs(select, order, filters = {}) {
   if (order) params.set("order", order);
   for (const [key, value] of Object.entries(filters)) {
     if (value === undefined || value === null || value === "" || value === "all") continue;
+    /* `and` is parenthesised HERE rather than at each of its three writers. The
+       value is produced by appendAnd(), which returns a bare comma-joined body,
+       and three call sites that each remembered the parentheses would be three
+       chances to forget — with the failure mode being a malformed query string
+       and a 400 that takes the whole roster tab down. Wrapping is idempotent, so
+       a caller that already parenthesised is left alone. */
+    if (key === "and" && !(String(value).startsWith("(") && String(value).endsWith(")"))) {
+      params.set(key, `(${value})`);
+      continue;
+    }
     params.set(key, value);
   }
   return params.toString();
@@ -460,6 +483,23 @@ export function normalizePage({ page = 1, pageSize = DEFAULT_PAGE_SIZE } = {}) {
  * wrong, the test sends the wrong encoding and fails, which is the entire
  * point of having it.
  */
+/**
+ * Append predicates to an existing `and=(...)` group without clobbering it.
+ *
+ * PostgREST takes ONE `and` key, so every predicate that has to be ANDed together
+ * — the date window, the college exclusion — goes in the same group. Two writers
+ * assigning `filters.and = ...` means the second silently discards the first, and
+ * a filter that disappears is far harder to notice than one that errors.
+ *
+ * Returns the group body, unparenthesised, so the caller always wraps once.
+ */
+function appendAnd(existing, predicates) {
+  const incoming = String(predicates ?? "").trim();
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  return `${String(existing).replace(/^\(|\)$/g, "")},${incoming}`;
+}
+
 export function rosterFilters({
   query,
   status,
@@ -467,6 +507,7 @@ export function rosterFilters({
   fromDate,
   toDate,
   college,
+  excludeCollege,
   year,
   department,
   method,
@@ -501,7 +542,57 @@ export function rosterFilters({
      matches nothing at all on this PostgREST - see exact() above - so college and
      department silently returned an empty roster for every value while the count
      beside the option said 107. */
-  if (college && college !== "all") filters.college_name = exact(college);
+  /* THE EXCLUSION. PostgREST has a real grammar here and it is easy to write
+     something that parses as SQL and 400s at the API.
+
+     MEASURED against this deployment (scripts/tmp-probe-postgrest.mjs ran every
+     plausible spelling; these are the actual results, not assumptions):
+
+       college_name=neq.<v>                              OK
+       and=(college_name.neq.<v>)                       OK
+       and=(or=(college_name.neq.<v>,...is.null))        400 PGRST100
+       or=(and(college_name.neq.<v>),...is.null)        OK
+       and=(college_name.in.(<v>),college_name.neq.<v2)) OK
+
+     The failure is `and=(or=(...))`: an `or` cannot be nested inside an `and`.
+     That is the exact form this file originally shipped, and it produced "could
+     not load roster" for every operator who touched the dropdown — a filter that
+     looks present and takes the whole tab down when used.
+
+     Two shapes are therefore needed, and which one applies depends on whether a
+     search term is active, because both want the single top-level `or=` key:
+
+       - no search  -> or=(and(college_name.neq.X),college_name.is.null)
+         The `.is.null` arm is what keeps participants who left the college blank.
+         In SQL `NULL <> 'X'` is NULL, not TRUE, so `neq` alone drops them, and an
+         exclusion that quietly loses rows is worse than no filter: the count on
+         screen and the spreadsheet disagree, and nobody notices until a payment
+         goes missing.
+       - search set -> folded into the existing `and=(...)` as a plain `neq`.
+         The `or=` key is already spoken for, so null-college rows are excluded
+         while searching. Narrow, documented, and zero rows today; the alternative
+         would be dropping the search-exclude combination entirely. */
+  const exclude = excludeCollege && excludeCollege !== "all" ? excludeCollege : "";
+  const include = college && college !== "all" ? college : "";
+
+  if (exclude && include) {
+    // Both, intersected. Two predicates on ONE column cannot be separate
+    // query-string keys — PostgREST keys by name, so the second overwrites the
+    // first — which is why this is an `and=(...)` group and not two params.
+    filters.and = appendAnd(
+      filters.and,
+      `college_name.in.(${q(include)}),college_name.neq.${q(exclude)}`
+    );
+  } else if (exclude) {
+    if (!term) {
+      filters.or = `(and(college_name.neq.${q(exclude)}),college_name.is.null)`;
+    } else {
+      filters.and = appendAnd(filters.and, `college_name.neq.${q(exclude)}`);
+    }
+  } else if (include) {
+    filters.college_name = exact(include);
+  }
+
   if (department && department !== "all") filters.department = exact(department);
   /* Year needs no quoting: it is a closed set of four values the column CHECK
      allows, and quoting it would still be correct but reads as if it were text
@@ -561,7 +652,12 @@ export function rosterFilters({
       like
     )},college_name.ilike.${q(like)},utr_number.ilike.${q(like)})`;
   }
-  if (range.length) filters.and = `(${range.join(",")})`;
+  /* Merged, not assigned. Two separate writers to `filters.and` — the date range
+     below and the college group above — and whichever ran second used to win
+     outright, so pairing a date window with the exclusion silently dropped the
+     exclusion (or the dates, depending on order) with no error anywhere. One
+     `and=(...)` group, both predicates, appended. */
+  if (range.length) filters.and = appendAnd(filters.and, range.join(","));
 
   return { filters, term };
 }
@@ -885,6 +981,7 @@ export async function staffExportRegistrations(token, options = {}) {
     event = null,
     status = null,
     college = null,
+    excludeCollege = null,
     year = null,
     department = null,
     method = null,
@@ -901,6 +998,11 @@ export async function staffExportRegistrations(token, options = {}) {
        "all" is the console's "not filtering" value and the function treats it as
        no filter, so it is passed through rather than stripped here. */
     p_college: college || null,
+    /* The exclusion goes into the export for the same reason the include does, and
+       harder: an operator who says "everyone except the host college" on screen
+       and downloads a sheet containing the host college has produced a file that
+       looks authoritative and is wrong. */
+    p_exclude_college: excludeCollege || null,
     p_year: year || null,
     p_department: department || null,
     /* Same rule for the payment-method filter, and it matters more here than for
@@ -1213,7 +1315,122 @@ export async function loadPublicContacts() {
   return { ok: true, contacts: Array.isArray(res.body) ? res.body : [], error: null };
 }
 
-/** Every contact row, published or retired. Admin+ to read and write. */
+/* ---------- announcements ---------- */
+
+/**
+ * The notices /announcements renders.
+ *
+ * A PUBLIC read, so it deliberately does not take a staff token - the same call
+ * `loadPublicContacts` makes for the contact page. A notice with no reader is not
+ * a notice, and it carries no participant data.
+ */
+export async function loadPublicAnnouncements(limit = 50) {
+  const res = await rpc("public_announcements", { p_limit: limit }, null);
+  if (!res.ok) {
+    return { ok: false, announcements: [], error: "Announcements are unavailable right now." };
+  }
+  return { ok: true, announcements: Array.isArray(res.body?.announcements) ? res.body.announcements : [], error: null };
+}
+
+/** Every announcement, retired and future-dated ones included. Admin+ to read. */
+export async function staffListAnnouncements(token) {
+  const res = await rpc("staff_list_announcements", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, announcements: [], error: res.body?.error ?? "The announcement list could not be loaded." };
+  }
+  return { ok: true, announcements: res.body?.announcements ?? [], error: null };
+}
+
+/** Create or edit. Admin+ — the database refuses anybody less. */
+export async function staffUpsertAnnouncement(token, announcement) {
+  const res = await rpc("staff_upsert_announcement", { p_announcement: announcement }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The announcement could not be saved." };
+  }
+  return { ok: true, id: res.body?.id ?? null, error: null };
+}
+
+/** Take one off the public page. The row stays, for the audit trail. */
+export async function staffRetireAnnouncement(token, id) {
+  const res = await rpc("staff_retire_announcement", { p_announcement_id: id }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That announcement could not be retired." };
+  }
+  return { ok: true, error: null };
+}
+
+/* ---------- problem statements ---------- */
+
+/**
+ * The briefs /problem-statements renders, optionally narrowed to one event.
+ *
+ * Public and unauthenticated for the same reason the announcements are. Passing
+ * null returns everything, which is what the page asks for before somebody picks
+ * an event from the filter.
+ */
+export async function loadPublicProblemStatements(eventId = null) {
+  const res = await rpc("public_problem_statements", { p_event_id: eventId }, null);
+  if (!res.ok) {
+    return { ok: false, statements: [], events: [], error: "Problem statements are unavailable right now." };
+  }
+  return {
+    ok: true,
+    statements: res.body?.statements ?? [],
+    events: res.body?.events ?? [],
+    error: null,
+  };
+}
+
+/**
+ * The console's list: the statements PLUS every catalogue event, so the event
+ * dropdown needs no second request and a brief can be attached to an event that is
+ * not active yet.
+ */
+export async function staffListProblemStatements(token) {
+  const res = await rpc("staff_list_problem_statements", {}, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, statements: [], events: [], error: res.body?.error ?? "The problem statements could not be loaded." };
+  }
+  return { ok: true, statements: res.body?.rows ?? [], events: res.body?.statements ?? [], error: null };
+}
+
+/**
+ * Erase an announcement outright. MASTER ONLY.
+ *
+ * Not the same thing as retiring, and the UI must not blur them:
+ *   retire  — takes it off the public page, keeps the row and the audit trail.
+ *             The right action for anything that WAS published and should come down.
+ *   delete  — removes the row. For a typo, a half-typed experiment, or a notice
+ *             saved before it was ready.
+ *
+ * An admin calling this gets a refusal with a sentence in it, not a silent no-op.
+ */
+export async function staffDeleteAnnouncement(token, id) {
+  const res = await rpc("staff_delete_announcement", { p_announcement_id: id }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That announcement could not be deleted." };
+  }
+  return { ok: true, error: null };
+}
+
+export async function staffUpsertProblemStatement(token, statement) {
+  const res = await rpc("staff_upsert_problem_statement", { p_statement: statement }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "The problem statement could not be saved." };
+  }
+  return { ok: true, id: res.body?.id ?? null, error: null };
+}
+
+export async function staffRetireProblemStatement(token, id) {
+  const res = await rpc("staff_retire_problem_statement", { p_statement_id: id }, token);
+  if (!res.ok || res.body?.ok === false) {
+    return { ok: false, error: res.body?.error ?? "That problem statement could not be retired." };
+  }
+  return { ok: true, error: null };
+}
+
+/**
+ * Every contact row, published or retired. Admin+ to read and write. */
 export async function staffListContacts(token) {
   const res = await rpc("staff_list_contacts", {}, token);
   if (!res.ok) return { ok: false, contacts: [], error: res.body?.error ?? "The contact list could not be loaded." };

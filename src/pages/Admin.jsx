@@ -51,6 +51,8 @@ import DestinationManager from "../components/admin/DestinationManager.jsx";
 import LookupManager from "../components/admin/LookupManager.jsx";
 import RegistrationEditor, { emptyRegistration } from "../components/admin/RegistrationEditor.jsx";
 import MailManager from "../components/admin/MailManager.jsx";
+import AnnouncementManager from "../components/admin/AnnouncementManager.jsx";
+import ProblemStatementManager from "../components/admin/ProblemStatementManager.jsx";
 import FinanceStrip from "../components/admin/FinanceStrip.jsx";
 // The `bundles` and `events` arrays are deliberately NOT imported here. This tab
 // used to build its price list from them, which meant an event created in the
@@ -73,6 +75,12 @@ const TABS = [
   // Contact channels are admin+ (the operations team that verifies payments is
   // the team that answers the phone), matching the RPC's own gate.
   { id: "contacts", label: "Contacts", action: "manage_contacts" },
+  // Announcements and problem statements are the two pages an operator keeps
+  // CURRENT during the event, so they sit together beside Contacts rather than at
+  // the far end: both are public content, both are admin+ (matching the RPCs' own
+  // staff_at_least('admin') gate), and both own their fetch like Contacts does.
+  { id: "announcements", label: "Announcements", action: "manage_content" },
+  { id: "statements", label: "Problem statements", action: "manage_content" },
   // Mail is coordinator+ for TEMPLATES (staff_mail_state, staff_upsert_template)
   // but the send button inside is master-only, matching staff_send_campaign. Gating
   // the tab on "read" keeps it visible to the whole operations team — a template
@@ -155,6 +163,11 @@ const DEFAULT_PAGING = {
     // from CSIT who is in their 2nd year", and the free-text search cannot
     // express that without matching a substring of each field separately.
     college: "all",
+    // "Everyone EXCEPT this college". Separate from `college` rather than a mode
+    // on it, because both are meaningful at once: "CSIT and not VEMU" is a
+    // question an operator asks, and a single dropdown would have to choose
+    // between the two.
+    excludeCollege: "all",
     year: "all",
     department: "all",
     // How the money arrived: cash or UPI. Kept SEPARATE from `status` rather than
@@ -628,6 +641,11 @@ function RosterTab({
          kind of mistake that reconciles a payment sheet against the wrong people
          and is not noticed until the money does not add up. */
       college: paging.college ?? "all",
+      /* Same rule for the exclusion, and it matters more: an operator who says
+         "everyone except the host college" on screen and downloads a sheet that
+         contains the host college has produced a file which looks authoritative
+         and is wrong. */
+      excludeCollege: paging.excludeCollege ?? "all",
       year: paging.year ?? "all",
       department: paging.department ?? "all",
       /* The payment-method filter too. Same reason, sharper: a cash sheet that
@@ -677,6 +695,7 @@ function RosterTab({
     paging.status !== "all" ||
     paging.event !== "all" ||
     paging.college !== "all" ||
+    paging.excludeCollege !== "all" ||
     paging.year !== "all" ||
     paging.department !== "all" ||
     Boolean(paging.fromDate) ||
@@ -907,6 +926,40 @@ function RosterTab({
                      says "nobody has registered from there yet"; the same college
                      with no number says "the filter is broken", and the operator
                      cannot tell which they are looking at. */
+                  ...lookups.colleges.map((c) => ({
+                    value: c.name,
+                    label: `${c.name} (${c.count ?? 0})`,
+                  })),
+                ]}
+                className="w-[15rem]"
+              />
+            </div>
+          </div>
+          {/* THE EXCLUSION, beside the include rather than inside it.
+
+              Deliberately NOT a mode toggle on the College dropdown: both are
+              meaningful at once. "CSIT, but not VEMU" is a real question, and one
+              dropdown forced to choose between the two could not answer it.
+
+              The counts come from the same options as the include filter, and they
+              are worth having here for a second reason: the label reads
+              "excluding", so the number beside it is unambiguous about which way
+              the filter runs. */}
+          <div>
+            <label
+              htmlFor="roster-exclude-college"
+              className="block font-mono text-[11px] uppercase tracking-[0.3em] text-ash"
+            >
+              Excluding
+            </label>
+            <div className="mt-2">
+              <Select
+                id="roster-exclude-college"
+                data-action="roster-exclude-college"
+                value={paging.excludeCollege}
+                onChange={(value) => setFilter({ excludeCollege: value })}
+                options={[
+                  { value: "all", label: "Including all" },
                   ...lookups.colleges.map((c) => ({
                     value: c.name,
                     label: `${c.name} (${c.count ?? 0})`,
@@ -2246,6 +2299,12 @@ function Console({ session, onExpired }) {
         {/* Same shape of ownership as the catalogue: the contacts tab loads and
             saves itself, so it takes no window, pager or reload wiring. */}
         {active?.id === "contacts" ? <ContactManager session={session} /> : null}
+
+        {/* Announcements and problem statements own their fetch, like contacts,
+            catalogue and destinations. Nothing here needs the roster window, pager
+            or reload wiring. */}
+        {active?.id === "announcements" ? <AnnouncementManager session={session} /> : null}
+        {active?.id === "statements" ? <ProblemStatementManager session={session} /> : null}
 
         {/* Same shape of ownership as the catalogue and contacts: the tab loads
             and saves itself, so it takes no window, pager or reload wiring. */}

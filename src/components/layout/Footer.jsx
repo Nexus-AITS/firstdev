@@ -10,6 +10,11 @@ const QUICK = [
   { to: "/ai", label: "NEXUS AI" },
   { to: "/about", label: "ABOUT" },
   { to: "/contact", label: "CONTACT" },
+  // In the footer rather than the navbar: seven header links with a
+  // twelve-character label overflow at the md breakpoint, and a team hunting for
+  // "what do I have to build" is reading a page, not scanning the header. The
+  // navbar still carries ANNOUNCEMENTS, which is the one people need unprompted.
+  { to: "/problem-statements", label: "PROBLEM STATEMENTS" },
 ];
 
 export default function Footer() {

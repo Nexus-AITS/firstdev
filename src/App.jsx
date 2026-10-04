@@ -34,6 +34,12 @@ const About = lazy(() => import("./pages/About.jsx"));
 /* The contact page's contents come from the database, not this bundle: a
    hardcoded address is an address nobody remembers to update. */
 const Contact = lazy(() => import("./pages/Contact.jsx"));
+/* Announcements and problem statements are database-backed public content, same
+   contract as /contact: an editor in the console writes them, these pages render
+   whatever the database says, and an empty database produces an honest empty page
+   rather than a stale notice compiled into the bundle. */
+const Announcements = lazy(() => import("./pages/Announcements.jsx"));
+const ProblemStatements = lazy(() => import("./pages/ProblemStatements.jsx"));
 const NotFound = lazy(() => import("./pages/NotFound.jsx"));
 
 /** Minimal in-layout loader shown while a route chunk resolves. */
@@ -109,6 +115,10 @@ export default function App() {
               <Route path="/ai" element={<NexusAI />} />
               <Route path="/about" element={<About />} />
               <Route path="/contact" element={<Contact />} />
+              {/* A team looking for "what do I have to build" should not have to
+                  guess which event page carries it. */}
+              <Route path="/announcements" element={<Announcements />} />
+              <Route path="/problem-statements" element={<ProblemStatements />} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </AnimatePresence>

@@ -10,6 +10,9 @@ const LINKS = [
   { to: "/events", label: "EVENTS" },
   { to: "/bundled", label: "BUNDLED" },
   { to: "/ai", label: "NEXUS AI" },
+  // Notices the team publishes: schedule changes, results. Real content from the
+  // database, so it changes without a deploy.
+  { to: "/announcements", label: "ANNOUNCEMENTS" },
   { to: "/about", label: "ABOUT" },
   // The channel list is a real page with a real route and real database content,
   // so it belongs beside the other public pages rather than buried in the footer.
@@ -82,7 +85,7 @@ export default function Navbar() {
             </span>
           </Link>
 
-          <ul className="hidden items-center gap-9 md:flex lg:gap-12">
+          <ul className="hidden items-center gap-7 md:flex lg:gap-11">
             {LINKS.map((link) => (
               <li key={link.to}>
                 <NavLink

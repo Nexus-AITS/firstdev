@@ -59,7 +59,16 @@ const sql = mgmtToken
         body: JSON.stringify({ query }),
         signal: AbortSignal.timeout(30_000),
       });
-      if (!res.ok) console.log(`  note: release step failed (${res.status})`);
+      // An expired or revoked PAT answers 401 with a JSON body. Returned as [] so a
+      // CALLER can preflight it — "the token exists" and "the token works" are
+      // different questions, and the claim test below must only run when it can
+      // put back whatever it takes.
+      if (!res.ok) {
+        console.log(
+          `  note: the Management API refused a statement (${res.status}) — is SUPABASE_ACCESS_TOKEN expired?`
+        );
+        return [];
+      }
     }
   : null;
 
@@ -198,6 +207,29 @@ try {
 
   /* ---------- 4. a sender claims it ---------- */
 
+  /* Claiming is IRREVERSIBLE from here without postgres: the row moves to
+     'sending' with a 120s lease, and only the release below puts it back.
+
+     The check is a PREFLIGHT, not "is there a token" — an expired PAT is still a
+     token, so guarding on its presence claimed first and failed afterwards, which
+     is the worst possible order: the suite reported a failure AND left a real
+     participant's confirmation stranded for two minutes with an attempt burned.
+     Repeated, that walks a job's attempt count past max_attempts and kills a real
+     send. A test that damages mail when the environment is misconfigured is a
+     test that gets pointed at production by accident. */
+  const canRelease = await (async () => {
+    if (!sql) return false;
+    try {
+      const probeRows = await sql("select 1 as ok;");
+      return Array.isArray(probeRows) && probeRows.length > 0;
+    } catch {
+      return false;
+    }
+  })();
+
+  if (!canRelease) {
+    out(false, "the Management API is unavailable — claiming was NOT tested, and NOTHING was claimed");
+  } else {
   const claim = await rpc(token, "claim_email_jobs", {
     p_worker: "probe-worker",
     // 1, not 5. This claims from the WHOLE queue and oldest-first, so a higher
@@ -265,6 +297,7 @@ try {
       });
     }
   }
+  } // end of the "can we release it?" guard
 
   /* ---------- 5. failure comes back with a DELAY, not an instant retry ---------- */
 
